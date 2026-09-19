@@ -156,7 +156,7 @@ export async function renameStream(orgId: number, streamId: number, nameRaw: str
 export async function updateStream(
   orgId: number,
   streamId: number,
-  patch: { color?: string | null; archived?: boolean; position?: number; agentBudgetUsd?: number | null },
+  patch: { color?: string | null; archived?: boolean; position?: number; agentBudgetUsd?: number | null; customerId?: number | null },
   actor: Actor
 ) {
   const stream = await assertStream(orgId, streamId);
@@ -165,7 +165,8 @@ export async function updateStream(
   if ("archived" in patch) update.archived = patch.archived;
   if ("position" in patch) update.position = patch.position;
   if ("agentBudgetUsd" in patch) update.agentBudgetUsd = patch.agentBudgetUsd ?? null;
-  if (Object.keys(update).length === 0) throw new ActionError("invalid", "Nothing to update — pass color, archived, position or agentBudgetUsd");
+  if ("customerId" in patch) update.customerId = patch.customerId ?? null;
+  if (Object.keys(update).length === 0) throw new ActionError("invalid", "Nothing to update — pass color, archived, position, agentBudgetUsd or customerId");
 
   const [updated] = await db
     .update(streams)
