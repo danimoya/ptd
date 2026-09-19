@@ -25,7 +25,8 @@ export type EventKind =
   | "priority_changed"
   | "deleted"
   | "stream_moved"
-  | "stream_renamed";
+  | "stream_renamed"
+  | "time_logged";
 
 export type Changes = Record<string, { old: unknown; new: unknown }>;
 

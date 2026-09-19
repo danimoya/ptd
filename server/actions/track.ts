@@ -23,6 +23,7 @@ import { customers, entryTemplates, streams, timeEntries } from "../../db/schema
 import { ActionError, defineAction, type ActionContext } from "./registry";
 import { hasRole } from "../types";
 import { getWebSocketManager } from "../websocket";
+import { actorFrom, recordEvent } from "../plan/taskEvents";
 import { agentMetricsFor, attributionFor, type EntrySource } from "../track/attribution";
 import { emptyBySource, entryMinutes, foldGroups, minutesFrom, num, totalMinutes, usd, type BySource } from "../track/aggregate";
 import {
@@ -116,6 +117,22 @@ async function insertEntry(
 /* ══════════════════════════════════════════════════════════════════════
    The timer
    ══════════════════════════════════════════════════════════════════════ */
+
+
+/** History row + webhook for a finished session attached to a task (fire-and-forget). */
+function recordTimeLogged(ctx: ActionContext, row: { id: number; taskId: number | null; checkIn: Date; checkOut: Date | null; entrySource: string; tokensUsed: number | null; apiCostUsd: number | null }) {
+  if (!row.taskId || !row.checkOut) return;
+  const minutes = entryMinutes(row.checkIn, row.checkOut);
+  const agentBits = row.entrySource === "agent" ? ` · ${row.tokensUsed ?? 0} tok · $${(row.apiCostUsd ?? 0).toFixed(2)}` : "";
+  void recordEvent({
+    taskId: row.taskId,
+    orgId: ctx.orgId,
+    actor: actorFrom(ctx),
+    kind: "time_logged",
+    note: `${minutes} min logged (${row.entrySource})${agentBits}`,
+    payload: { entryId: row.id, entrySource: row.entrySource, minutes, tokensUsed: row.tokensUsed, apiCostUsd: row.apiCostUsd },
+  });
+}
 
 defineAction({
   name: "time_entry.start",
@@ -222,6 +239,7 @@ defineAction({
       .returning();
     ws()?.notifyTimerStop(ctx.userId, timerPayload(row));
     ws()?.notifyDashboardUpdate(ctx.userId, { reason: "time_entry.stop", entryId: row.id });
+    recordTimeLogged(ctx, row);
     return {
       entry: await viewEntry(ctx.orgId, row.id),
       minutes: entryMinutes(row.checkIn, row.checkOut),
@@ -279,6 +297,7 @@ defineAction({
       metrics: metrics.values,
     });
     ws()?.notifyDashboardUpdate(ctx.userId, { reason: "time_entry.log_past", entryId: row.id });
+    recordTimeLogged(ctx, row);
     return {
       entry: await viewEntry(ctx.orgId, row.id),
       minutes: entryMinutes(row.checkIn, row.checkOut),
