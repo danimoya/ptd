@@ -107,3 +107,30 @@ describe("buildSnippets", () => {
     }
   });
 });
+
+describe("webhook event catalogue", () => {
+  it("namespaces every kind and keeps the two families disjoint", async () => {
+    const { ALL_EVENT_KINDS, STREAM_EVENTS, TASK_EVENTS } = await import("../../client/src/features/org/events");
+    for (const k of TASK_EVENTS) expect(k.startsWith("task.")).toBe(true);
+    for (const k of STREAM_EVENTS) expect(k.startsWith("stream.")).toBe(true);
+    expect(new Set(ALL_EVENT_KINDS).size).toBe(ALL_EVENT_KINDS.length);
+    // `ping` is what webhook.test delivers, so it must be subscribable.
+    expect(ALL_EVENT_KINDS).toContain("ping");
+  });
+
+  it("parses the comma-separated field, trimming and de-duplicating in order", async () => {
+    const { parseEvents } = await import("../../client/src/features/org/events");
+    expect(parseEvents("")).toEqual([]);
+    expect(parseEvents("  ")).toEqual([]);
+    expect(parseEvents("task.created, task.completed")).toEqual(["task.created", "task.completed"]);
+    expect(parseEvents("a,,  b , a")).toEqual(["a", "b"]);
+  });
+
+  it("flags kinds nothing emits but never flags a real one or the wildcard", async () => {
+    const { ALL_EVENT_KINDS, unknownEvents } = await import("../../client/src/features/org/events");
+    expect(unknownEvents("task.created, stream.renamed, ping")).toEqual([]);
+    expect(unknownEvents("*")).toEqual([]);
+    expect(unknownEvents("task.creted, nonsense")).toEqual(["task.creted", "nonsense"]);
+    expect(unknownEvents(ALL_EVENT_KINDS.join(", "))).toEqual([]);
+  });
+});

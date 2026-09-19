@@ -45,8 +45,8 @@ export type TaskSort = "priority" | "due" | "updated" | "title";
 
 export interface TaskFilters {
   search?: string;
-  streamId?: number;
-  appId?: number;
+  streamId?: number | "none";
+  appId?: number | "none";
   status?: TaskStatus[];
   assignedTo?: number | "me" | "none";
   priorityMin?: number;

@@ -84,8 +84,8 @@ export default function BacklogTab() {
   const filters: TaskFilters = useMemo(
     () => ({
       search: debouncedSearch.trim() || undefined,
-      streamId: streamId ? Number(streamId) : undefined,
-      appId: appId ? Number(appId) : undefined,
+      streamId: streamId === "none" ? "none" : streamId ? Number(streamId) : undefined,
+      appId: appId === "none" ? "none" : appId ? Number(appId) : undefined,
       status: status ? [status as (typeof TASK_STATUSES)[number]] : undefined,
       priorityMin: priorityMin !== "" ? Number(priorityMin) : undefined,
       effortMax: effortMax !== "" ? Number(effortMax) : undefined,
@@ -129,8 +129,8 @@ export default function BacklogTab() {
     setPickingNext(true);
     try {
       const res = await fetchNextTask({
-        streamId: streamId ? Number(streamId) : undefined,
-        appId: appId ? Number(appId) : undefined,
+        streamId: streamId && streamId !== "none" ? Number(streamId) : undefined,
+        appId: appId && appId !== "none" ? Number(appId) : undefined,
       });
       if (!res.task) toast({ title: "Nothing left to start", description: "No backlog or triaged task matches the current stream/app filter." });
       else openTask(res.task, res.why);
@@ -166,6 +166,7 @@ export default function BacklogTab() {
           <Field label="stream">
             <select value={streamId} onChange={(e) => setStreamId(e.target.value)} className={selectClass} data-testid="filter-stream">
               <option value="">all streams</option>
+              <option value="none">— no stream —</option>
               {(Array.isArray(streams.data) ? streams.data : []).filter((s) => !s.archived).map((s) => (
                 <option key={s.id} value={s.id}>{s.name}</option>
               ))}
@@ -174,6 +175,7 @@ export default function BacklogTab() {
           <Field label="app">
             <select value={appId} onChange={(e) => setAppId(e.target.value)} className={selectClass} data-testid="filter-app">
               <option value="">all apps</option>
+              <option value="none">— no app —</option>
               {(Array.isArray(apps.data) ? apps.data : []).map((a) => (
                 <option key={a.id} value={a.id}>{a.key}</option>
               ))}

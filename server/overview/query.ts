@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gte, ilike, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import { db } from "../../db";
 import { apps, streams, tasks, users } from "../../db/schema";
-import { band, CLAIMABLE_STATUSES, CLOSED_STATUSES, type Sort, type TaskQueryInput } from "./schema";
+import { band, CLAIMABLE_STATUSES, CLOSED_STATUSES, normaliseScope, type Sort, type TaskQueryInput } from "./schema";
 
 export * from "./schema";
 
@@ -19,11 +19,17 @@ function buildWhere(input: TaskQueryInput, orgId: number, callerId: number): SQL
     const needle = `%${input.search}%`;
     parts.push(or(ilike(tasks.title, needle), ilike(sql`coalesce(${tasks.description}, '')`, needle)));
   }
-  if (input.streamId !== undefined) parts.push(eq(tasks.streamId, input.streamId));
-  if (input.appId !== undefined) parts.push(eq(tasks.appId, input.appId));
-  if (input.assignedTo === "none") parts.push(isNull(tasks.assignedTo));
-  else if (input.assignedTo === "me") parts.push(eq(tasks.assignedTo, callerId));
-  else if (typeof input.assignedTo === "number") parts.push(eq(tasks.assignedTo, input.assignedTo));
+  const streamId = normaliseScope(input.streamId);
+  const appId = normaliseScope(input.appId);
+  const assignedTo = normaliseScope(input.assignedTo);
+
+  if (streamId === "none") parts.push(isNull(tasks.streamId));
+  else if (streamId !== undefined) parts.push(eq(tasks.streamId, streamId));
+  if (appId === "none") parts.push(isNull(tasks.appId));
+  else if (appId !== undefined) parts.push(eq(tasks.appId, appId));
+  if (assignedTo === "none") parts.push(isNull(tasks.assignedTo));
+  else if (assignedTo === "me") parts.push(eq(tasks.assignedTo, callerId));
+  else if (typeof assignedTo === "number") parts.push(eq(tasks.assignedTo, assignedTo));
   if (input.priorityMin !== undefined) parts.push(gte(tasks.priorityScore, input.priorityMin));
   if (input.priorityMax !== undefined) parts.push(lte(tasks.priorityScore, input.priorityMax));
   if (input.effortMax !== undefined) parts.push(lte(tasks.effort, input.effortMax));
@@ -113,7 +119,11 @@ export async function queryTasks(input: TaskQueryInput, orgId: number, callerId:
 
 /** Highest-scoring claimable task, plus the arithmetic that put it on top. */
 export async function nextTask(
-  opts: { streamId?: number; appId?: number; assignee?: number | "me" | "any" | "none" },
+  opts: {
+    streamId?: number | "none" | null;
+    appId?: number | "none" | null;
+    assignee?: number | "me" | "any" | "none" | null;
+  },
   orgId: number,
   callerId: number,
 ) {
@@ -121,13 +131,21 @@ export async function nextTask(
     eq(tasks.orgId, orgId),
     inArray(tasks.status, [...CLAIMABLE_STATUSES]),
   ];
-  if (opts.streamId !== undefined) parts.push(eq(tasks.streamId, opts.streamId));
-  if (opts.appId !== undefined) parts.push(eq(tasks.appId, opts.appId));
+  const streamId = normaliseScope(opts.streamId);
+  const appId = normaliseScope(opts.appId);
+  // `undefined` (key omitted) keeps the default "unclaimed or mine"; `null` is an
+  // explicit request for unassigned work only, so the two must not be conflated.
+  const assignee = opts.assignee === null ? "none" : opts.assignee;
 
-  if (opts.assignee === "me") parts.push(eq(tasks.assignedTo, callerId));
-  else if (opts.assignee === "none") parts.push(isNull(tasks.assignedTo));
-  else if (typeof opts.assignee === "number") parts.push(eq(tasks.assignedTo, opts.assignee));
-  else if (opts.assignee !== "any") {
+  if (streamId === "none") parts.push(isNull(tasks.streamId));
+  else if (streamId !== undefined) parts.push(eq(tasks.streamId, streamId));
+  if (appId === "none") parts.push(isNull(tasks.appId));
+  else if (appId !== undefined) parts.push(eq(tasks.appId, appId));
+
+  if (assignee === "me") parts.push(eq(tasks.assignedTo, callerId));
+  else if (assignee === "none") parts.push(isNull(tasks.assignedTo));
+  else if (typeof assignee === "number") parts.push(eq(tasks.assignedTo, assignee));
+  else if (assignee !== "any") {
     // Default: work nobody else has claimed, or work already assigned to the caller.
     parts.push(or(isNull(tasks.assignedTo), eq(tasks.assignedTo, callerId)));
   }

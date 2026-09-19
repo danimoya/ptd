@@ -45,10 +45,12 @@ defineAction({
     "The single highest-priority task still worth starting (status backlog or triaged), plus `why` — the urgency/impact/effort arithmetic behind its score. " +
     "By default it only offers work nobody has claimed or work already assigned to you, which makes it safe to poll in an autonomous loop.",
   input: z.object({
-    streamId: z.number().int().positive().optional().describe("Restrict to one stream."),
-    appId: z.number().int().positive().optional().describe("Restrict to one app."),
-    assignee: z.union([z.literal("me"), z.literal("any"), z.literal("none"), z.number().int().positive()]).optional()
-      .describe('Override the default filter: "me", "none" (unassigned only), "any" (ignore assignment), or a user id.'),
+    streamId: z.union([z.number().int().positive(), z.literal("none"), z.null()]).optional()
+      .describe('Restrict to one stream, or null / "none" for work filed against no stream.'),
+    appId: z.union([z.number().int().positive(), z.literal("none"), z.null()]).optional()
+      .describe('Restrict to one app, or null / "none" for work filed against no app.'),
+    assignee: z.union([z.literal("me"), z.literal("any"), z.literal("none"), z.null(), z.number().int().positive()]).optional()
+      .describe('Override the default filter: "me", null / "none" (unassigned only), "any" (ignore assignment), or a user id.'),
   }),
   requiredRole: "member",
   surface: "overview",
@@ -60,7 +62,9 @@ defineAction({
   title: "Query tasks",
   description:
     "Filter, sort and page the backlog server-side. Returns { items, total } so a caller can page without re-counting. " +
-    "Completed and wontfix tasks are hidden unless includeCompleted is true or an explicit status list asks for them.",
+    "Completed and wontfix tasks are hidden unless includeCompleted is true or an explicit status list asks for them. " +
+    'For streamId, appId and assignedTo, omitting the key means "no filter" while null (or the string "none") means ' +
+    '"filed against nothing" — the same convention the Plan surface\'s task.list uses.',
   input: taskQueryInput,
   requiredRole: "member",
   surface: "overview",

@@ -19,11 +19,13 @@ export type Sort = (typeof SORTS)[number];
 
 export const taskQueryInput = z.object({
   search: z.string().max(200).optional().describe("Case-insensitive substring of the title or description."),
-  streamId: z.number().int().positive().optional().describe("Only tasks in this stream."),
-  appId: z.number().int().positive().optional().describe("Only tasks against this app."),
+  streamId: z.union([z.number().int().positive(), z.literal("none"), z.null()]).optional()
+    .describe('Stream id, or null / "none" for tasks filed against no stream.'),
+  appId: z.union([z.number().int().positive(), z.literal("none"), z.null()]).optional()
+    .describe('App id, or null / "none" for tasks filed against no app — which is where cards land when a stream is detached from an app.'),
   status: z.array(z.enum(TASK_STATUSES)).optional().describe("Explicit status whitelist; overrides includeCompleted."),
-  assignedTo: z.union([z.number().int().positive(), z.literal("me"), z.literal("none")]).optional()
-    .describe('User id, "me" for the caller, or "none" for unassigned tasks.'),
+  assignedTo: z.union([z.number().int().positive(), z.literal("me"), z.literal("none"), z.null()]).optional()
+    .describe('User id, "me" for the caller, or null / "none" for unassigned tasks.'),
   priorityMin: z.number().int().min(0).max(100).optional().describe("Lowest priorityScore to include (0-100)."),
   priorityMax: z.number().int().min(0).max(100).optional().describe("Highest priorityScore to include (0-100)."),
   effortMax: z.number().int().min(0).max(10).optional().describe("Only tasks costing at most this much effort (0-10)."),
@@ -36,6 +38,16 @@ export const taskQueryInput = z.object({
 });
 
 export type TaskQueryInput = z.infer<typeof taskQueryInput>;
+
+export type Scope = "none";
+export const NONE: Scope = "none";
+
+/** Collapse the two accepted spellings of "filed against nothing" into one. */
+export function normaliseScope<T>(value: T | Scope | null | undefined): T | Scope | undefined {
+  if (value === null) return NONE;
+  return value ?? undefined;
+}
+
 
 export function band(score: number): "critical" | "high" | "medium" | "low" {
   if (score >= 75) return "critical";

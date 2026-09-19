@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { band, CLAIMABLE_STATUSES, OPEN_STATUSES, SORTS, taskQueryInput } from "../../server/overview/schema";
+import { band, CLAIMABLE_STATUSES, normaliseScope, OPEN_STATUSES, SORTS, taskQueryInput } from "../../server/overview/schema";
 import { priorityScore, TASK_STATUSES } from "../../db/schema";
 
 describe("band", () => {
@@ -73,6 +73,36 @@ describe("taskQueryInput", () => {
     expect(taskQueryInput.safeParse({ status: ["backlog", "wontfix"] }).success).toBe(true);
     expect(taskQueryInput.safeParse({ status: ["in_progress"] }).success).toBe(false);
     expect(taskQueryInput.safeParse({ status: ["open"] }).success).toBe(false);
+  });
+
+  it('accepts null as a synonym for "none", matching Plan task.list\'s vocabulary', () => {
+    // Plan's task.list spells "filed against nothing" as null; a query string
+    // cannot carry null, so the REST route needs "none". Both are accepted here
+    // so one MCP vocabulary works across every surface.
+    for (const key of ["streamId", "appId", "assignedTo"]) {
+      expect(taskQueryInput.safeParse({ [key]: null }).success, `${key}: null`).toBe(true);
+      expect(taskQueryInput.safeParse({ [key]: "none" }).success, `${key}: "none"`).toBe(true);
+    }
+  });
+
+  it("collapses both spellings to one internal value, and keeps omitted distinct from null", () => {
+    expect(normaliseScope(null)).toBe("none");
+    expect(normaliseScope("none")).toBe("none");
+    expect(normaliseScope(undefined)).toBeUndefined();
+    expect(normaliseScope(7)).toBe(7);
+    // Omitting a key is "no filter"; null is an explicit "filed against nothing".
+    expect(normaliseScope(undefined)).not.toBe(normaliseScope(null));
+  });
+
+  it('accepts an id or "none" for streamId and appId', () => {
+    // Detaching a stream from an app clears tasks.app_id on that lane's cards
+    // (Plan's stream.detach_app), so "no app" is a population worth finding.
+    expect(taskQueryInput.safeParse({ appId: "none" }).success).toBe(true);
+    expect(taskQueryInput.safeParse({ streamId: "none" }).success).toBe(true);
+    expect(taskQueryInput.safeParse({ appId: 3, streamId: 1 }).success).toBe(true);
+    expect(taskQueryInput.safeParse({ appId: "any" }).success).toBe(false);
+    expect(taskQueryInput.safeParse({ appId: 0 }).success).toBe(false);
+    expect(taskQueryInput.safeParse({ streamId: -1 }).success).toBe(false);
   });
 
   it('accepts a user id, "me" or "none" for assignedTo and nothing else', () => {

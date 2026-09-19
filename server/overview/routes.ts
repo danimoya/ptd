@@ -13,10 +13,16 @@ import { TASK_STATUSES } from "../../db/schema";
  * and hit with a querystring — and because a querystring is what a `curl` user reaches for.
  */
 
-const num = (v: unknown): number | undefined => {
+/**
+ * Parse a numeric query param. An absent or empty value means "no filter", but
+ * a value that is present and unparsable is returned as-is so zod rejects it with
+ * a 400 — silently dropping `?priorityMin=hgh` would widen the result set and the
+ * caller would never learn their filter did nothing.
+ */
+const num = (v: unknown): number | string | undefined => {
   if (typeof v !== "string" || v.trim() === "") return undefined;
   const n = Number(v);
-  return Number.isFinite(n) ? Math.trunc(n) : undefined;
+  return Number.isFinite(n) ? Math.trunc(n) : v;
 };
 
 const bool = (v: unknown): boolean | undefined => {
@@ -48,14 +54,17 @@ export function registerOverviewRoutes(app: Express) {
     const ctx = contextFromRequest(req);
     const q = req.query;
     const assigneeRaw = typeof q.assignedTo === "string" ? q.assignedTo : undefined;
-    const statuses = list(q.status)?.filter((s): s is (typeof TASK_STATUSES)[number] => (TASK_STATUSES as readonly string[]).includes(s));
+    /** `?appId=none` means "filed against no app"; anything else must parse as an id. */
+    const idOrNone = (v: unknown) => (v === "none" ? ("none" as const) : num(v));
+    const statuses = list(q.status) as (typeof TASK_STATUSES)[number][] | undefined;
 
     const parsed = taskQueryInput.safeParse({
       search: typeof q.search === "string" && q.search.trim() ? q.search.trim() : undefined,
-      streamId: num(q.streamId),
-      appId: num(q.appId),
-      status: statuses && statuses.length > 0 ? statuses : undefined,
+      streamId: idOrNone(q.streamId),
+      appId: idOrNone(q.appId),
+      status: statuses,
       assignedTo: assigneeRaw === "me" || assigneeRaw === "none" ? assigneeRaw : num(assigneeRaw),
+      // An unrecognised status is a typo, not a filter — let zod say so.
       priorityMin: num(q.priorityMin),
       priorityMax: num(q.priorityMax),
       effortMax: num(q.effortMax),

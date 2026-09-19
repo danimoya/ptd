@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import CopyBlock from "./CopyBlock";
 import { createWebhook, deleteWebhook, listWebhooks, testWebhook, type CreatedWebhook, type WebhookTestResult } from "./api";
+import { ALL_EVENT_KINDS, EVENT_GROUPS, parseEvents, unknownEvents } from "./events";
 
 const EXAMPLE_ENVELOPE = JSON.stringify(
   { event: "task.completed", orgId: 1, taskId: 42, actor: { userId: 7, label: "Nightly Triage Bot", isAgent: true }, payload: { status: "completed" }, ts: "2026-09-19T09:00:00.000Z" },
@@ -42,7 +43,7 @@ export default function IntegrationsTab() {
       createWebhook({
         url: url.trim(),
         secret: secret.trim() || undefined,
-        events: events.trim() ? events.split(",").map((s) => s.trim()).filter(Boolean) : undefined,
+        events: events.trim() ? parseEvents(events) : undefined,
       }),
     onSuccess: (data) => {
       setCreated(data);
@@ -74,6 +75,7 @@ export default function IntegrationsTab() {
   });
 
   const rows = hooks.data ?? [];
+  const unknown = unknownEvents(events);
 
   return (
     <div className="space-y-5">
@@ -125,7 +127,19 @@ export default function IntegrationsTab() {
             </label>
             <label className="block">
               <span className="eyebrow text-[9px]">events — blank for all</span>
-              <input value={events} onChange={(e) => setEvents(e.target.value)} placeholder="task.created, task.completed" className="draft-input w-full mt-1 text-sm font-mono focus-ink" data-testid="webhook-events" />
+              <input
+                value={events}
+                onChange={(e) => setEvents(e.target.value)}
+                placeholder="task.created, task.completed"
+                list="ptd-event-kinds"
+                className="draft-input w-full mt-1 text-sm font-mono focus-ink"
+                data-testid="webhook-events"
+              />
+              <datalist id="ptd-event-kinds">
+                {ALL_EVENT_KINDS.map((k) => (
+                  <option key={k} value={k} />
+                ))}
+              </datalist>
             </label>
             <button
               type="submit"
@@ -140,6 +154,33 @@ export default function IntegrationsTab() {
               <span className="eyebrow text-[9px]">signing secret — leave blank and one is generated for you</span>
               <input value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="whsec_…" spellCheck={false} autoComplete="off" className="draft-input w-full mt-1 text-sm font-mono focus-ink" data-testid="webhook-secret-input" />
             </label>
+
+            <div className="sm:col-span-3 border-t border-rule pt-3 space-y-2">
+              {unknown.length > 0 ? (
+                <p className="text-xs font-serif italic text-vermilion" data-testid="webhook-unknown-events">
+                  Nothing currently emits {unknown.map((k) => `“${k}”`).join(", ")} — it will be accepted but never delivered.
+                </p>
+              ) : null}
+              {EVENT_GROUPS.map((g) => (
+                <div key={g.label}>
+                  <div className="eyebrow text-[9px]">{g.label}</div>
+                  <p className="text-xs font-serif italic text-ink-muted">{g.note}</p>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {g.kinds.map((k) => (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => setEvents((cur) => (parseEvents(cur).includes(k) ? cur : [...parseEvents(cur), k].join(", ")))}
+                        className="stamp border-rule text-ink-muted normal-case tracking-normal font-mono hover:border-ink hover:text-ink transition-colors focus-ink"
+                        data-testid={`event-kind-${k}`}
+                      >
+                        {k}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
           </form>
         </section>
       )}

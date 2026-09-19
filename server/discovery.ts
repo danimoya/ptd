@@ -6,10 +6,21 @@ function describeShape(shape: z.ZodRawShape) {
   const out: Record<string, string> = {};
   for (const [key, field] of Object.entries(shape)) {
     const f = field as z.ZodTypeAny;
-    const optional = f.isOptional();
-    const inner = optional ? (f as z.ZodOptional<z.ZodTypeAny>).unwrap() : f;
-    const typeName = (inner._def as { typeName?: string }).typeName?.replace(/^Zod/, "").toLowerCase() ?? "unknown";
-    out[key] = `${typeName}${optional ? " (optional)" : ""}${f.description ? ` — ${f.description}` : ""}`;
+    let inner: z.ZodTypeAny = f;
+    let optional = false;
+    let nullable = false;
+    // Peel optional/nullable/default wrappers in any order; .describe() text survives on the outer type.
+    for (let i = 0; i < 8; i++) {
+      const def = inner._def as { typeName?: string; innerType?: z.ZodTypeAny };
+      if (def.typeName === "ZodOptional" || def.typeName === "ZodDefault") { optional = true; inner = def.innerType!; continue; }
+      if (def.typeName === "ZodNullable") { nullable = true; inner = def.innerType!; continue; }
+      break;
+    }
+    const def = inner._def as { typeName?: string; values?: string[] };
+    let typeName = def.typeName?.replace(/^Zod/, "").toLowerCase() ?? "unknown";
+    if (def.typeName === "ZodEnum" && def.values) typeName = def.values.join(" | ");
+    const flags = [optional ? "optional" : "", nullable ? "nullable" : ""].filter(Boolean).join(", ");
+    out[key] = `${typeName}${flags ? ` (${flags})` : ""}${f.description ? ` — ${f.description}` : ""}`;
   }
   return out;
 }

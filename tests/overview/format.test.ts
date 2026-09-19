@@ -126,6 +126,12 @@ describe("taskQueryString", () => {
     expect(taskQueryString({ tags: ["security", "a11y"] })).toBe("tags=security%2Ca11y");
   });
 
+  it('serialises the "none" scopes the route parses back', () => {
+    expect(taskQueryString({ appId: "none" })).toBe("appId=none");
+    expect(taskQueryString({ streamId: "none" })).toBe("streamId=none");
+    expect(taskQueryString({ appId: 3 })).toBe("appId=3");
+  });
+
   it("keeps a zero lower bound instead of dropping it as falsy", () => {
     expect(taskQueryString({ priorityMin: 0, offset: 0 })).toContain("priorityMin=0");
     expect(taskQueryString({ priorityMin: 0, offset: 0 })).toContain("offset=0");
