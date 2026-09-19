@@ -18,6 +18,7 @@ import { registerImportRoutes } from "./importers/routes";
 import { registerIcalRoutes } from "./ical";
 import { registerBillingRoutes } from "./billing/routes";
 import { registerSlackRoutes } from "./integrations/slack/routes";
+import { registerReportsRoutes } from "./track/reportsRoutes";
 import "./actions";
 
 export function registerRoutes(app: Express) {
@@ -41,5 +42,6 @@ export function registerRoutes(app: Express) {
   registerIcalRoutes(app);
   registerBillingRoutes(app);
   registerSlackRoutes(app);
+  registerReportsRoutes(app);
   return httpServer;
 }

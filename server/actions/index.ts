@@ -6,4 +6,5 @@ import "./overview";
 import "./oauth";
 import "./billing";
 import "./slack";
+import "./reports";
 export * from "./registry";
