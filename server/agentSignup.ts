@@ -9,6 +9,8 @@ import { createOrganization, slugify } from "./auth";
 import { mintToken } from "./tokens";
 import { authLimiter } from "./rate-limit";
 import { buildManifest } from "./discovery";
+import { assertWithinPlan } from "./billing/limits";
+import { ActionError } from "./actions/registry";
 
 const schema = z
   .object({
@@ -42,6 +44,12 @@ export function registerAgentSignup(app: Express) {
       const [org] = await db.select().from(organizations).where(eq(organizations.inviteCode, inviteCode)).limit(1);
       if (!org) return res.status(404).json({ error: "invalid_invite_code", message: "No organization matches that invite code" });
       orgId = org.id; role = "member"; orgLabel = org.name;
+      try {
+        await assertWithinPlan(orgId, "agent");
+      } catch (err) {
+        if (err instanceof ActionError) return res.status(403).json({ error: "plan_limit", message: err.message });
+        throw err;
+      }
     } else {
       orgId = -1; role = "owner"; orgLabel = orgName?.trim() || `${name} organization`;
     }

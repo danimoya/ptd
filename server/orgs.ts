@@ -7,6 +7,8 @@ import { organizations, memberships, invitations, users, ROLES, type Role } from
 import { auth, createOrganization } from "./auth";
 import { validate } from "./validation";
 import { hasRole, isRole, type AuthenticatedRequest, type OrgRequest } from "./types";
+import { assertWithinPlan } from "./billing/limits";
+import { ActionError } from "./actions/registry";
 
 /**
  * Binds req.org = {id, role}. Order of precedence: X-Org-Id header, ?orgId,
@@ -107,6 +109,12 @@ export function registerOrgRoutes(app: Express) {
     if (invite.email.toLowerCase() !== ar.user[0].email.toLowerCase()) return res.status(403).json({ error: "Invitation email does not match" });
     const existing = await db.select({ id: memberships.id }).from(memberships).where(and(eq(memberships.orgId, invite.orgId), eq(memberships.userId, ar.user[0].id))).limit(1);
     if (existing.length === 0) {
+      try {
+        await assertWithinPlan(invite.orgId, "member");
+      } catch (err) {
+        if (err instanceof ActionError) return res.status(403).json({ error: "plan_limit", message: err.message });
+        throw err;
+      }
       await db.insert(memberships).values({ orgId: invite.orgId, userId: ar.user[0].id, role: invite.role, invitedBy: invite.invitedBy });
     }
     await db.update(invitations).set({ acceptedAt: new Date() }).where(eq(invitations.id, invite.id));
