@@ -14,7 +14,10 @@ import { registerActionsHttp } from "./actionsHttp";
 import { registerPlanRoutes } from "./plan/routes";
 import { registerTrackRoutes } from "./track/routes";
 import { registerOverviewRoutes } from "./overview/routes";
+import { registerImportRoutes } from "./importers/routes";
+import { registerIcalRoutes } from "./ical";
 import { registerBillingRoutes } from "./billing/routes";
+import { registerSlackRoutes } from "./integrations/slack/routes";
 import "./actions";
 
 export function registerRoutes(app: Express) {
@@ -34,6 +37,9 @@ export function registerRoutes(app: Express) {
   registerPlanRoutes(app);
   registerTrackRoutes(app);
   registerOverviewRoutes(app);
+  registerImportRoutes(app);
+  registerIcalRoutes(app);
   registerBillingRoutes(app);
+  registerSlackRoutes(app);
   return httpServer;
 }

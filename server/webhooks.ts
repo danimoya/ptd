@@ -106,6 +106,8 @@ export function buildEnvelope(orgId: number, event: OutboundEvent) {
  */
 export async function dispatchWebhooks(orgId: number, event: OutboundEvent): Promise<void> {
   try {
+    // The Slack adapter listens to the same fan-out; it never throws and is never awaited.
+    void import("./integrations/slack/notify").then((slack) => slack.notifySlack(orgId, event)).catch(() => {});
     const rows = await db
       .select({ id: orgIntegrations.id, config: orgIntegrations.config })
       .from(orgIntegrations)

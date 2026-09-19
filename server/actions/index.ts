@@ -5,4 +5,5 @@ import "./track";
 import "./overview";
 import "./oauth";
 import "./billing";
+import "./slack";
 export * from "./registry";

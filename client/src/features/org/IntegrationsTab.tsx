@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Github, Loader2, Plus, Send, ShieldAlert, Slack, Trash2, TriangleAlert, Webhook } from "lucide-react";
+import { Check, Github, Loader2, Plus, Send, ShieldAlert, Trash2, TriangleAlert, Webhook } from "lucide-react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import CopyBlock from "./CopyBlock";
 import { createWebhook, deleteWebhook, listWebhooks, testWebhook, type CreatedWebhook, type WebhookTestResult } from "./api";
 import { ALL_EVENT_KINDS, EVENT_GROUPS, parseEvents, unknownEvents } from "./events";
+import SlackCard from "./slack/SlackCard";
 
 const EXAMPLE_ENVELOPE = JSON.stringify(
   { event: "task.completed", orgId: 1, taskId: 42, actor: { userId: 7, label: "Nightly Triage Bot", isAgent: true }, payload: { status: "completed" }, ts: "2026-09-19T09:00:00.000Z" },
@@ -26,7 +27,7 @@ function verify(rawBody, header, secret) {
   return a.length === b.length && timingSafeEqual(a, b);
 }`;
 
-/** Webhooks are live; Slack and GitHub are declared, not pretended. */
+/** Webhooks and Slack are live; GitHub is declared, not pretended. */
 export default function IntegrationsTab() {
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -255,24 +256,21 @@ export default function IntegrationsTab() {
         )}
       </section>
 
-      <section className="grid gap-3 sm:grid-cols-2">
-        {[
-          { icon: Slack, name: "Slack", note: "Post task events into a channel, and create a task from a thread with a slash command." },
-          { icon: Github, name: "GitHub", note: "Mirror issues and pull requests onto tasks through externalKey, both directions." },
-        ].map((c) => (
-          <article key={c.name} className="paper-flat p-4 opacity-80" data-testid={`coming-soon-${c.name.toLowerCase()}`}>
-            <div className="flex items-center gap-2">
-              <c.icon className="h-4 w-4 text-ink-muted" />
-              <span className="font-display text-lg tracking-tight">{c.name}</span>
-              <span className="stamp border-rule text-ink-muted ml-auto">coming soon</span>
-            </div>
-            <p className="text-sm font-serif text-ink-muted mt-2">{c.note}</p>
-            <p className="eyebrow text-[9px] mt-2">
-              the <code className="font-mono">org_integrations</code> table already carries this kind — only the adapter is missing
-            </p>
-          </article>
-        ))}
-      </section>
+      <SlackCard />
+
+      <article className="paper-flat p-4 opacity-80" data-testid="coming-soon-github">
+        <div className="flex items-center gap-2">
+          <Github className="h-4 w-4 text-ink-muted" />
+          <span className="font-display text-lg tracking-tight">GitHub</span>
+          <span className="stamp border-rule text-ink-muted ml-auto">coming soon</span>
+        </div>
+        <p className="text-sm font-serif text-ink-muted mt-2">
+          Mirror issues and pull requests onto tasks through <code className="font-mono text-xs">externalKey</code>, both directions.
+        </p>
+        <p className="eyebrow text-[9px] mt-2">
+          the <code className="font-mono">org_integrations</code> table already carries this kind — only the adapter is missing
+        </p>
+      </article>
     </div>
   );
 }
