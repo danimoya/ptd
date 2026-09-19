@@ -1,0 +1,72 @@
+import type { Express, Request, Response } from "express";
+import { randomBytes } from "crypto";
+import bcrypt from "bcryptjs";
+import { eq } from "drizzle-orm";
+import { z } from "zod";
+import { db } from "../db";
+import { users, organizations, memberships } from "../db/schema";
+import { createOrganization, slugify } from "./auth";
+import { mintToken } from "./tokens";
+import { authLimiter } from "./rate-limit";
+import { buildManifest } from "./discovery";
+
+const schema = z
+  .object({
+    name: z.string().min(1).max(80),
+    email: z.string().email().max(255).optional(),
+    orgName: z.string().min(1).max(255).optional(),
+    inviteCode: z.string().min(4).max(64).optional(),
+  })
+  .refine((d) => !(d.inviteCode && d.orgName), { message: "inviteCode and orgName are mutually exclusive", path: ["orgName"] });
+
+/**
+ * POST /api/agent/register — public. Creates an agent seat (users.is_agent)
+ * plus either a new org (owner) or a membership in the org that owns the
+ * invite code (member). Returns the bearer token exactly once.
+ */
+export function registerAgentSignup(app: Express) {
+  app.post("/api/agent/register", authLimiter, async (req: Request, res: Response) => {
+    const parsed = schema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: "invalid_request", message: parsed.error.issues.map((i) => i.message).join(", ") });
+    }
+    const { name, email, orgName, inviteCode } = parsed.data;
+    const agentEmail = email ?? `agent_${slugify(name).replace(/-/g, "_")}_${randomBytes(3).toString("hex")}@agents.ptd.local`;
+    const taken = await db.select({ id: users.id }).from(users).where(eq(users.email, agentEmail)).limit(1);
+    if (taken.length > 0) return res.status(409).json({ error: "email_taken", message: "Email already registered" });
+
+    let orgId: number;
+    let role: string;
+    let orgLabel: string;
+    if (inviteCode) {
+      const [org] = await db.select().from(organizations).where(eq(organizations.inviteCode, inviteCode)).limit(1);
+      if (!org) return res.status(404).json({ error: "invalid_invite_code", message: "No organization matches that invite code" });
+      orgId = org.id; role = "member"; orgLabel = org.name;
+    } else {
+      orgId = -1; role = "owner"; orgLabel = orgName?.trim() || `${name} organization`;
+    }
+
+    const [user] = await db
+      .insert(users)
+      .values({ email: agentEmail, passwordHash: await bcrypt.hash(randomBytes(32).toString("hex"), 10), displayName: name, isAgent: true })
+      .returning();
+
+    if (inviteCode) {
+      await db.insert(memberships).values({ orgId, userId: user.id, role });
+    } else {
+      const org = await createOrganization(orgLabel, user.id);
+      orgId = org.id;
+    }
+
+    const minted = await mintToken(user.id, orgId, `${name} — initial`);
+    const manifest = buildManifest(req);
+    res.status(201).json({
+      user: { id: user.id, email: user.email, displayName: user.displayName, isAgent: true },
+      org: { id: orgId, name: orgLabel, role },
+      token: { id: minted.id, name: minted.name, prefix: minted.prefix, secret: minted.secret },
+      auth_header_example: `Authorization: Bearer ${minted.secret}`,
+      mcp_url: manifest.endpoints.mcp.url,
+      discovery_url: manifest.endpoints.discovery,
+    });
+  });
+}

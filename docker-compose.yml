@@ -1,0 +1,49 @@
+# Self-host: `cp .env.example .env`, set DB_PASSWORD, JWT_SECRET and PTD_SECRET_KEY, then
+# `docker compose up -d --build`. PTD listens on http://localhost:3001; put your TLS proxy in front.
+#
+# Transport security between app and database: TLS with the X25519MLKEM768 post-quantum hybrid
+# key exchange (HeliosDB-Nano ≥ 4.40, Node 24 / OpenSSL 3.5), certificate pinned via the shared
+# /tls volume, SCRAM-SHA-256 authentication, AES-256-GCM encryption at rest when DB_ENCRYPTION_KEY
+# is set. The database is not reachable from outside the compose network.
+services:
+  ptd-db:
+    build:
+      context: ./db/image
+      args:
+        NANO_VERSION: ${NANO_VERSION:-4.40.0}
+    image: ptd-db:${NANO_VERSION:-4.40.0}
+    container_name: ptd-db
+    restart: unless-stopped
+    environment:
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      DB_ENCRYPTION_KEY: ${DB_ENCRYPTION_KEY:-}
+    volumes:
+      - ptd_db_data:/data
+      - ptd_db_tls:/tls
+    networks: [ptd-internal]
+
+  ptd:
+    build: .
+    image: ptd:latest
+    container_name: ptd
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://postgres:${DB_PASSWORD}@ptd-db:5432/heliosdb
+      DATABASE_SSL: "true"
+      DATABASE_SSL_CA: /tls/server.crt
+      PORT: "3001"
+    volumes:
+      - ptd_db_tls:/tls:ro
+    ports:
+      - "${PTD_PORT:-3001}:3001"
+    depends_on: [ptd-db]
+    networks: [ptd-internal]
+
+volumes:
+  ptd_db_data:
+  ptd_db_tls:
+
+networks:
+  ptd-internal:
+    driver: bridge

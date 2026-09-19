@@ -1,0 +1,403 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =========================================================================
+   TimeTracker — Almanac / Ledger aesthetic
+   Parchment palette · Fraunces display · Newsreader body · JetBrains Mono
+   ========================================================================= */
+
+@layer base {
+  :root {
+    /* Parchment system (light) */
+    --ink: 28 24% 10%;           /* deep ink-black */
+    --ink-muted: 32 12% 38%;
+    --parchment: 38 45% 92%;     /* warm cream paper */
+    --parchment-deep: 36 38% 86%;
+    --vermilion: 13 74% 42%;     /* burnt sienna / ledger red */
+    --sage: 140 14% 34%;         /* ledger green for positive metrics */
+    --rule: 28 24% 10% / 0.14;   /* hairline rule colour */
+
+    --background: var(--parchment);
+    --foreground: var(--ink);
+    --card: 38 50% 95%;
+    --card-foreground: var(--ink);
+    --popover: 38 50% 96%;
+    --popover-foreground: var(--ink);
+    --primary: var(--ink);
+    --primary-foreground: 38 45% 92%;
+    --secondary: 36 30% 86%;
+    --secondary-foreground: var(--ink);
+    --muted: 36 30% 88%;
+    --muted-foreground: var(--ink-muted);
+    --accent: var(--vermilion);
+    --accent-foreground: 38 45% 94%;
+    --destructive: 0 65% 40%;
+    --destructive-foreground: 38 45% 94%;
+    --border: 28 24% 10% / 0.14;
+    --input: 28 24% 10% / 0.14;
+    --ring: 13 74% 42%;
+    --radius: 2px;
+    --chart-1: 13 74% 42%;
+    --chart-2: 28 24% 10%;
+    --chart-3: 140 14% 34%;
+    --chart-4: 32 12% 38%;
+    --chart-5: 36 38% 60%;
+  }
+
+  .dark {
+    --ink: 36 40% 88%;
+    --ink-muted: 34 18% 60%;
+    --parchment: 26 18% 8%;
+    --parchment-deep: 26 18% 12%;
+    --vermilion: 16 78% 58%;
+    --sage: 140 24% 54%;
+    --rule: 36 40% 88% / 0.14;
+
+    --background: var(--parchment);
+    --foreground: var(--ink);
+    --card: 26 18% 11%;
+    --card-foreground: var(--ink);
+    --popover: 26 18% 12%;
+    --popover-foreground: var(--ink);
+    --primary: var(--ink);
+    --primary-foreground: 26 18% 8%;
+    --secondary: 26 18% 16%;
+    --secondary-foreground: var(--ink);
+    --muted: 26 18% 14%;
+    --muted-foreground: var(--ink-muted);
+    --accent: var(--vermilion);
+    --accent-foreground: 26 18% 8%;
+    --destructive: 0 60% 50%;
+    --destructive-foreground: 26 18% 8%;
+    --border: 36 40% 88% / 0.14;
+    --input: 36 40% 88% / 0.14;
+    --ring: 16 78% 58%;
+  }
+
+  * {
+    @apply border-border;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html {
+    font-feature-settings: "ss01", "ss02", "cv11";
+    text-rendering: geometricPrecision;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: "Newsreader", ui-serif, Georgia, serif;
+    font-weight: 400;
+    font-size: 16px;
+    line-height: 1.55;
+    /* Parchment grain: two very subtle blended gradients */
+    background-image:
+      radial-gradient(
+        1200px 800px at 20% -10%,
+        hsl(var(--parchment-deep)) 0%,
+        transparent 55%
+      ),
+      radial-gradient(
+        900px 700px at 90% 110%,
+        hsl(var(--parchment-deep)) 0%,
+        transparent 60%
+      );
+    background-attachment: fixed;
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+
+  /* Reserve space above any bottom nav / safe-area */
+  body,
+  #root {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* Typography primitives */
+  h1, h2, h3, h4 {
+    font-family: "Fraunces", ui-serif, Georgia, serif;
+    font-optical-sizing: auto;
+    font-variation-settings: "SOFT" 30, "WONK" 0;
+    letter-spacing: -0.01em;
+  }
+
+  /* Editorial numeric */
+  .font-numeric {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-variant-numeric: tabular-nums slashed-zero;
+    font-feature-settings: "ss02" on, "cv11" on;
+  }
+
+  /* Small-caps eyebrows */
+  .eyebrow {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-weight: 500;
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: hsl(var(--ink-muted));
+  }
+
+  /* Hairline rule helpers */
+  .rule-b {
+    border-bottom: 1px solid hsl(var(--rule));
+  }
+  .rule-t {
+    border-top: 1px solid hsl(var(--rule));
+  }
+}
+
+@layer components {
+  /* Paper: card-like surface with folded corner effect optional */
+  .paper {
+    background-color: hsl(var(--card));
+    border: 1px solid hsl(var(--rule));
+    border-radius: 2px;
+    box-shadow:
+      0 1px 0 hsl(var(--rule)),
+      0 0 0 1px hsl(var(--parchment));
+  }
+
+  .paper-flat {
+    background-color: hsl(var(--card));
+    border: 1px solid hsl(var(--rule));
+    border-radius: 2px;
+  }
+
+  /* Decorative fleuron divider — uses pseudo-elements */
+  .fleuron {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    color: hsl(var(--ink-muted));
+    font-family: "Fraunces", serif;
+    font-size: 14px;
+    font-style: italic;
+  }
+  .fleuron::before,
+  .fleuron::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: hsl(var(--rule));
+  }
+
+  /* Subtle paper-grain noise (SVG data-uri, very faint) */
+  .grain::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.35;
+    mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.10  0 0 0 0 0.08  0 0 0 0 0.04  0 0 0 0.06 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  }
+  .dark .grain::before {
+    opacity: 0.25;
+    mix-blend-mode: screen;
+  }
+
+  /* Chronograph tick ring — radial lines for timer face */
+  .chrono-ticks {
+    background-image:
+      conic-gradient(
+        from 0deg,
+        hsl(var(--rule)) 0 1deg,
+        transparent 1deg 6deg
+      );
+    -webkit-mask-image: radial-gradient(
+      closest-side,
+      transparent 0 calc(100% - 14px),
+      #000 calc(100% - 14px) calc(100% - 2px),
+      transparent calc(100% - 2px)
+    );
+            mask-image: radial-gradient(
+      closest-side,
+      transparent 0 calc(100% - 14px),
+      #000 calc(100% - 14px) calc(100% - 2px),
+      transparent calc(100% - 2px)
+    );
+  }
+
+  /* Ink-style focus ring */
+  .focus-ink:focus-visible {
+    outline: 2px solid hsl(var(--vermilion));
+    outline-offset: 2px;
+  }
+
+  /* Section label (e.g. "I. TIMER", "II. LEDGER") */
+  .section-num {
+    font-family: "Fraunces", serif;
+    font-style: italic;
+    font-weight: 400;
+    font-size: 12px;
+    color: hsl(var(--vermilion));
+    letter-spacing: 0.02em;
+  }
+
+  /* Tabular data table cells */
+  .ledger-cell {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+    color: hsl(var(--ink));
+  }
+}
+
+/* Scrollbar refinement */
+@media (pointer: fine) {
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--rule));
+    border-radius: 10px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--ink-muted) / 0.4);
+  }
+}
+
+/* Reduced motion: honour user's preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* =========================================================================
+   Landing / marketing utilities — shared "drafting studio" vocabulary.
+   Ported so the public landing reads as the same document set as Kanttban.
+   ========================================================================= */
+
+@layer components {
+  .wordmark {
+    font-family: "Fraunces", serif;
+    font-weight: 500;
+    letter-spacing: -0.045em;
+    font-variation-settings: "opsz" 144, "SOFT" 50;
+  }
+
+  .microcaps {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    font-size: 0.65rem;
+    font-weight: 500;
+    color: hsl(var(--ink-muted));
+  }
+
+  .stamp {
+    border: 1px solid hsl(var(--ink));
+    background-color: hsl(var(--parchment));
+    color: hsl(var(--ink));
+    padding: 1px 6px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.65rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    line-height: 1.4;
+    border-radius: 1px;
+    display: inline-block;
+  }
+
+  .stamp-strong {
+    background-color: hsl(var(--ink));
+    color: hsl(var(--parchment));
+  }
+
+  .draft-input {
+    background-color: hsl(var(--parchment));
+    border: 1px solid hsl(var(--rule));
+    color: hsl(var(--ink));
+    border-radius: 2px;
+    padding: 0.5rem 0.75rem;
+    font-family: "Newsreader", ui-serif, Georgia, serif;
+    transition: border-color 140ms ease, box-shadow 140ms ease;
+  }
+  .draft-input:focus,
+  .draft-input:focus-visible {
+    outline: none;
+    border-color: hsl(var(--ink));
+    box-shadow: 0 0 0 3px hsl(var(--vermilion) / 0.25);
+  }
+
+  .caret::after {
+    content: "▍";
+    margin-left: 0.1em;
+    color: hsl(var(--vermilion));
+    animation: blink 1.05s steps(1, end) infinite;
+  }
+}
+
+@keyframes blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes rise-in {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@layer utilities {
+  .reveal {
+    opacity: 0;
+    transform: translateY(8px);
+    animation: rise-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+  .reveal-1 { animation-delay: 0.05s; }
+  .reveal-2 { animation-delay: 0.15s; }
+  .reveal-3 { animation-delay: 0.28s; }
+  .reveal-4 { animation-delay: 0.42s; }
+  .reveal-5 { animation-delay: 0.58s; }
+  .reveal-6 { animation-delay: 0.72s; }
+
+  .text-balance { text-wrap: balance; }
+  .text-pretty { text-wrap: pretty; }
+
+  .nice-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+  .nice-scroll::-webkit-scrollbar-track { background: hsl(var(--parchment-deep)); }
+  .nice-scroll::-webkit-scrollbar-thumb {
+    background: hsl(var(--ink) / 0.32);
+    border: 2px solid hsl(var(--parchment-deep));
+  }
+  .nice-scroll::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--ink) / 0.55);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+  .caret::after {
+    animation: none;
+    opacity: 1;
+  }
+}

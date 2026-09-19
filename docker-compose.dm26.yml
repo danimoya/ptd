@@ -1,0 +1,9 @@
+# Host override for ptd.danimoya.com: joins NPM's network instead of publishing a port.
+# docker compose -f docker-compose.yml -f docker-compose.dm26.yml up -d --build
+services:
+  ptd:
+    ports: !reset []
+    networks: [ptd-internal, management-network]
+networks:
+  management-network:
+    external: true

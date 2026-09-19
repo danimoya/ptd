@@ -1,0 +1,21 @@
+{
+  "include": ["client/src/**/*", "db/**/*", "server/**/*", "scripts/**/*"],
+  "exclude": ["node_modules", "build", "dist", "_port", "**/*.test.ts", "**/*.test.tsx"],
+  "compilerOptions": {
+    "incremental": true,
+    "tsBuildInfoFile": "./node_modules/typescript/tsbuildinfo",
+    "noEmit": true,
+    "module": "ESNext",
+    "target": "ES2022",
+    "strict": true,
+    "lib": ["esnext", "dom", "dom.iterable"],
+    "jsx": "preserve",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "types": ["node", "vite/client"],
+    "paths": { "@/*": ["./client/src/*"], "@db/*": ["./db/*"] }
+  }
+}
