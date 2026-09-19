@@ -56,3 +56,8 @@ export const getTokens = () => api<TokenRow[]>("/tokens");
 export const createToken = (name: string, expiresInDays?: number) =>
   api<{ id: number; name: string; prefix: string; secret: string }>("/tokens", { method: "POST", body: JSON.stringify({ name, expiresInDays }) });
 export const revokeToken = (id: number) => api(`/tokens/${id}`, { method: "DELETE" });
+
+/** Invoke a registry action over REST (same role gate and handler as MCP). */
+export const callAction = <T = unknown>(name: string, args: Record<string, unknown> = {}) =>
+  api<T>(`/actions/${name}`, { method: "POST", body: JSON.stringify(args) });
+export const listActions = () => api<{ name: string; title: string; description: string; surface: string; requiredRole: Role }[]>("/actions");
