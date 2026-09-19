@@ -6,6 +6,7 @@ import { registerTokenRoutes } from "./tokens";
 import { registerAgentSignup } from "./agentSignup";
 import { registerMcp } from "./mcp";
 import { registerDiscovery } from "./discovery";
+import { registerOpenApi } from "./openapi";
 import { initializeWebSocket } from "./websocket";
 import { apiLimiter } from "./rate-limit";
 import { registerActionsHttp } from "./actionsHttp";
@@ -24,6 +25,7 @@ export function registerRoutes(app: Express) {
   registerTokenRoutes(app);
   registerAgentSignup(app);
   registerDiscovery(app);
+  registerOpenApi(app);
   registerMcp(app);
   registerActionsHttp(app);
   registerPlanRoutes(app);

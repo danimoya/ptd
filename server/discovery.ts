@@ -51,6 +51,7 @@ export function buildManifest(req: Request) {
       rest_base: `${base}/api`,
       discovery: `${base}/.well-known/ai-agent.json`,
       llms_txt: `${base}/llms.txt`,
+      openapi: `${base}/openapi.json`,
     },
     roles: ["member", "manager", "admin", "owner"],
     tools: allActions().map((a) => ({
