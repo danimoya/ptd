@@ -1,6 +1,20 @@
 import { Request, Response, NextFunction } from "express";
 import { z, ZodSchema } from "zod";
 
+/**
+ * Body/query/param validation for the hand-written REST routes (auth, orgs,
+ * tokens, the track picker feed). Everything that goes through the action
+ * registry validates from the action's own `input` schema instead — that schema
+ * is also what the MCP manifest publishes, so there is exactly one description
+ * of each call's arguments.
+ *
+ * This file used to carry a parallel set of TimeTracker schemas — projects,
+ * invoices, reports, bulk edits, and a second copy of the register/login rules
+ * whose password minimum had already drifted out of step with auth.ts. They are
+ * gone: `projects` no longer exists (streams replaced it), invoices and reports
+ * are Phase 2, and a duplicated rule that disagrees with the real one is worse
+ * than no rule.
+ */
 export function validate<T extends ZodSchema>(
   schema: T,
   source: "body" | "query" | "params" = "body"
@@ -18,112 +32,16 @@ export function validate<T extends ZodSchema>(
   };
 }
 
-export const emailSchema = z.string().email().max(255);
-export const passwordSchema = z.string().min(6).max(255);
-
-export const registerSchema = z.object({
-  email: emailSchema,
-  password: passwordSchema,
-});
-
-export const loginSchema = z.object({
-  email: emailSchema,
-  password: z.string().min(1).max(255),
-});
-
-export const createCustomerSchema = z.object({
-  name: z.string().min(1).max(255),
-  weeklyGoalHours: z.number().int().min(0).max(168).optional().nullable(),
-  billingAddress: z.string().max(2000).optional().nullable(),
-  billingEmail: z.string().email().max(255).optional().nullable().or(z.literal("")),
-});
-
-export const updateCustomerSchema = createCustomerSchema.partial();
-
-export const createTimeEntrySchema = z.object({
-  isBreak: z.boolean(),
-  customerId: z.number().int().positive().optional().nullable(),
-  projectId: z.number().int().positive().optional().nullable(),
-  taskId: z.number().int().positive().optional().nullable(),
-  notes: z.string().max(2000).optional().nullable(),
-  // Optional past-tense entries used by integrations: pass both checkIn
-  // and checkOut to log a completed session retroactively.
-  checkIn: z.string().datetime().optional(),
-  checkOut: z.string().datetime().optional(),
-});
-
-export const updateTimeEntrySchema = z.object({
-  checkOut: z.string().datetime().optional(),
-  customerId: z.number().int().positive().optional().nullable(),
-  projectId: z.number().int().positive().optional().nullable(),
-  taskId: z.number().int().positive().optional().nullable(),
-  notes: z.string().max(2000).optional().nullable(),
-  isBreak: z.boolean().optional(),
-});
-
-export const createProjectSchema = z.object({
-  name: z.string().min(1).max(255),
-  customerId: z.number().int().positive().optional().nullable(),
-  color: z
-    .string()
-    .regex(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i)
-    .max(16)
-    .optional()
-    .nullable()
-    .or(z.literal("")),
-  archived: z.boolean().optional(),
-});
-
-export const updateProjectSchema = createProjectSchema.partial();
-
-export const invoiceSchema = z.object({
-  customerId: z.number().int().positive(),
-  month: z.number().int().min(1).max(12),
-  year: z.number().int().min(2000).max(2100),
-});
-
+/** `:id` in a path, as a number. */
 export const idParamSchema = z.object({
   id: z.string().regex(/^\d+$/).transform(Number),
 });
 
-export const bulkIdsSchema = z.object({
-  timeEntryIds: z.array(z.number().int().positive()).min(1).max(500),
-  updates: z
-    .object({
-      customerId: z.number().int().positive().optional().nullable(),
-      notes: z.string().max(2000).optional().nullable(),
-      isBreak: z.boolean().optional(),
-    })
-    .optional(),
-});
+/** An ISO-8601 datetime or a bare calendar day, the two forms the track surface accepts. */
+export const whenSchema = z.string().datetime().or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/));
 
-export const dateRangeSchema = z.object({
-  startDate: z.string().datetime().or(z.string().regex(/^\d{4}-\d{2}-\d{2}/)),
-  endDate: z.string().datetime().or(z.string().regex(/^\d{4}-\d{2}-\d{2}/)),
-  groupBy: z.enum(["day", "week", "month"]).optional(),
-  includeBreaks: z.boolean().optional(),
-  customerIds: z.array(z.number().int().positive()).optional(),
+/** `?from=&to=` on a list endpoint. */
+export const windowSchema = z.object({
+  from: whenSchema.optional(),
+  to: whenSchema.optional(),
 });
-
-export const compareReportSchema = z.object({
-  current: dateRangeSchema.pick({ startDate: true, endDate: true }),
-  previous: dateRangeSchema.pick({ startDate: true, endDate: true }),
-  groupBy: z.enum(["day", "week", "month"]).optional(),
-});
-
-export const createTemplateSchema = z.object({
-  name: z.string().min(1).max(100),
-  customerId: z.number().int().positive().optional().nullable(),
-  projectId: z.number().int().positive().optional().nullable(),
-  notes: z.string().max(2000).optional().nullable(),
-  icon: z
-    .string()
-    .max(32)
-    .regex(/^[a-z0-9-]+$/i)
-    .optional()
-    .nullable()
-    .or(z.literal("")),
-  isBreak: z.boolean().optional(),
-});
-
-export const updateTemplateSchema = createTemplateSchema.partial();

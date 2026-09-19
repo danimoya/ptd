@@ -16,20 +16,6 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: 3000,
-    hmr: {
-      host: "0.0.0.0",
-      port: 3000,
-    },
-    proxy: {
-      "/api": {
-        target: "http://0.0.0.0:3001",
-        changeOrigin: true,
-      },
-      "/ws": {
-        target: "ws://0.0.0.0:3001",
-        ws: true,
-      },
-    },
   },
   resolve: {
     alias: {
