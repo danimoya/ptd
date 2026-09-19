@@ -5,6 +5,8 @@ import AgentsTab from "@/features/org/AgentsTab";
 import TokensTab from "@/features/org/TokensTab";
 import IntegrationsTab from "@/features/org/IntegrationsTab";
 import ApiTab from "@/features/org/ApiTab";
+import BillingTab from "@/features/org/BillingTab";
+import { useMe } from "@/hooks/use-me";
 
 const TABS = [
   { to: "/org", label: "Members", num: "i" },
@@ -13,6 +15,8 @@ const TABS = [
   { to: "/org/integrations", label: "Integrations", num: "iv" },
   { to: "/org/api", label: "API", num: "v" },
 ] as const;
+// Billing only exists on the hosted instance; self-hosted organizations never see it.
+const BILLING_TAB = { to: "/org/billing", label: "Billing", num: "vi" } as const;
 
 /**
  * Org — who is in the organization, what credentials exist, and what the outside
@@ -21,6 +25,8 @@ const TABS = [
  */
 export default function Org() {
   const location = useLocation();
+  const { org } = useMe();
+  const tabs = org && org.plan !== "self_hosted" ? [...TABS, BILLING_TAB] : [...TABS];
 
   return (
     <section className="animate-ink-fade-in space-y-5">
@@ -35,7 +41,7 @@ export default function Org() {
 
       <nav className="rule-b">
         <ul className="flex gap-1 -mx-1 overflow-x-auto nice-scroll">
-          {TABS.map((t) => {
+          {tabs.map((t) => {
             const active = t.to === "/org" ? location.pathname === "/org" || location.pathname === "/org/" : location.pathname.startsWith(t.to);
             return (
               <li key={t.to}>
@@ -62,6 +68,7 @@ export default function Org() {
         <Route path="tokens" element={<TokensTab />} />
         <Route path="integrations" element={<IntegrationsTab />} />
         <Route path="api" element={<ApiTab />} />
+        <Route path="billing" element={<BillingTab />} />
         <Route path="*" element={<Navigate to="/org" replace />} />
       </Routes>
     </section>
