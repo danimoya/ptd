@@ -3,4 +3,5 @@ import "./core";
 import "./plan";
 import "./track";
 import "./overview";
+import "./oauth";
 export * from "./registry";

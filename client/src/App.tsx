@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import Layout from "./components/Layout";
 import Auth from "./pages/Auth";
+import OAuthConsent from "./pages/OAuthConsent";
 import Overview from "./pages/Overview";
 import Plan from "./pages/Plan";
 import Track from "./pages/Track";
@@ -35,6 +36,7 @@ export default function App() {
     <Router>
       <Routes>
         <Route path="/auth" element={<Auth />} />
+        <Route path="/oauth/consent" element={<OAuthConsent />} />
         <Route element={<Layout />}>
           <Route path="/" element={<ProtectedRoute><Home /></ProtectedRoute>} />
           <Route path="/overview/*" element={<ProtectedRoute><RequireRole min="manager"><Overview /></RequireRole></ProtectedRoute>} />

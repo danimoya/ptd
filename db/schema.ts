@@ -237,3 +237,62 @@ export function priorityScore(urgency: number, impact: number, effort: number): 
   const raw = (urgency * impact) / Math.max(effort, 1);
   return Math.max(0, Math.min(100, Math.round(raw)));
 }
+
+/* ─────────────── OAuth 2.1 authorization server (MCP connectors) ───────────────
+ * Claude.ai / ChatGPT connectors cannot be handed a pasted token, so PTD also
+ * speaks the MCP authorization flow: dynamic registration, Authorization Code +
+ * PKCE, refresh. The access token it issues is a normal `ptd_` api_token, so
+ * /mcp keeps exactly one verification path; these tables only record which
+ * client asked, who approved it and for which organization.
+ */
+
+export const oauthClients = pgTable("oauth_clients", {
+  id: serial("id").primaryKey(),
+  clientId: varchar("client_id", { length: 64 }).notNull().unique(),
+  /** scrypt hash; null for public clients (token_endpoint_auth_method = none). */
+  clientSecretHash: varchar("client_secret_hash", { length: 200 }),
+  clientName: varchar("client_name", { length: 255 }).notNull(),
+  redirectUris: jsonb("redirect_uris").$type<string[]>().notNull().default([]),
+  grantTypes: jsonb("grant_types").$type<string[]>().notNull().default([]),
+  tokenEndpointAuthMethod: varchar("token_endpoint_auth_method", { length: 32 }).notNull().default("none"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const oauthCodes = pgTable("oauth_codes", {
+  id: serial("id").primaryKey(),
+  code: varchar("code", { length: 128 }).notNull().unique(),
+  clientId: varchar("client_id", { length: 64 }).notNull(),
+  userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  orgId: integer("org_id").references(() => organizations.id, { onDelete: "cascade" }).notNull(),
+  redirectUri: varchar("redirect_uri", { length: 500 }).notNull(),
+  scope: varchar("scope", { length: 200 }).notNull().default(""),
+  codeChallenge: varchar("code_challenge", { length: 128 }).notNull(),
+  codeChallengeMethod: varchar("code_challenge_method", { length: 10 }).notNull().default("S256"),
+  /** RFC 8707 audience — must be the MCP endpoint when the client sends one. */
+  resource: varchar("resource", { length: 500 }),
+  expiresAt: timestamp("expires_at").notNull(),
+  usedAt: timestamp("used_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const oauthRefreshTokens = pgTable("oauth_refresh_tokens", {
+  id: serial("id").primaryKey(),
+  /** Keyed SHA-256 of the opaque `ptdr_…` token — deterministic so it is findable. */
+  tokenHash: varchar("token_hash", { length: 200 }).notNull().unique(),
+  clientId: varchar("client_id", { length: 64 }).notNull(),
+  userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  orgId: integer("org_id").references(() => organizations.id, { onDelete: "cascade" }).notNull(),
+  /** The `ptd_` access token this refresh token currently owns. */
+  apiTokenId: integer("api_token_id").references(() => apiTokens.id, { onDelete: "cascade" }),
+  /** Lineage: the code the grant came from, carried through every rotation, so a
+   *  replayed authorization code can revoke everything it ever produced. */
+  codeId: integer("code_id").references(() => oauthCodes.id, { onDelete: "set null" }),
+  scope: varchar("scope", { length: 200 }).notNull().default(""),
+  expiresAt: timestamp("expires_at").notNull(),
+  revokedAt: timestamp("revoked_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type OauthClient = typeof oauthClients.$inferSelect;
+export type OauthCode = typeof oauthCodes.$inferSelect;
+export type OauthRefreshToken = typeof oauthRefreshTokens.$inferSelect;

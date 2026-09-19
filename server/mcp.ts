@@ -7,6 +7,8 @@ import { memberships, type Role } from "../db/schema";
 import { verifyApiToken } from "./tokens";
 import { actionsFor, runAction, ActionError, type ActionContext } from "./actions";
 import { isRole } from "./types";
+import { baseUrl } from "./discovery";
+import { wwwAuthenticate } from "./oauth/metadata";
 
 /** One MCP server per request (stateless Streamable HTTP), exposing only the actions the caller's role allows. */
 export function buildMcpForContext(ctx: ActionContext): McpServer {
@@ -42,6 +44,10 @@ export function registerMcp(app: Express) {
   app.post("/mcp", async (req: Request, res: Response) => {
     const auth = await verifyApiToken(req.header("Authorization"));
     if (!auth) {
+      // RFC 9728 / MCP authorization: point the client at the protected-resource
+      // metadata so a connector can discover the OAuth server and get a token
+      // itself instead of asking a human to paste one.
+      res.setHeader("WWW-Authenticate", wwwAuthenticate(baseUrl(req)));
       return res.status(401).json({ jsonrpc: "2.0", error: { code: -32001, message: "Missing or invalid Bearer token" }, id: null });
     }
     const [m] = await db.select({ role: memberships.role }).from(memberships)
