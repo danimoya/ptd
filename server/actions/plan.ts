@@ -2,7 +2,7 @@ import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 import { addDays } from "date-fns";
 import { db } from "../../db";
-import { apps, memberships, streams, tasks, users, TASK_STATUSES, type Task } from "../../db/schema";
+import { apps, memberships, streams, tasks, users, TASK_STATUSES, type Task, customers } from "../../db/schema";
 import { ActionError, defineAction, type ActionContext } from "./registry";
 import { wouldCreateCycle } from "../cascade";
 import {
@@ -731,11 +731,16 @@ defineAction({
     archived: z.boolean().optional(),
     position: z.number().int().min(0).optional().describe("Lane order on the board, ascending"),
     agentBudgetUsd: z.number().nonnegative().nullable().optional().describe("Spend ceiling for agent work in this lane"),
+    customerId: z.number().int().positive().nullable().optional().describe("Customer this lane is billed to (null to unbill)"),
   }),
   requiredRole: "manager",
   surface: "plan",
   handler: async (args, ctx) => {
     const { streamId, ...patch } = args;
+    if (patch.customerId != null) {
+      const [c] = await db.select({ id: customers.id }).from(customers).where(and(eq(customers.id, patch.customerId), eq(customers.orgId, ctx.orgId))).limit(1);
+      if (!c) throw new ActionError("not_found", `Customer ${patch.customerId} is not in this organization`);
+    }
     return updateStream(ctx.orgId, streamId, patch, actorFrom(ctx));
   },
 });

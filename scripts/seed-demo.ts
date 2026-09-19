@@ -8,7 +8,7 @@ import { promisify } from "util";
 import { eq } from "drizzle-orm";
 import { db } from "../db";
 import {
-  organizations, users, memberships, apiTokens, apps, streams, streamApps, tasks, taskEvents, timeEntries,
+  organizations, users, memberships, apiTokens, apps, customers, streams, streamApps, tasks, taskEvents, timeEntries,
   priorityScore,
 } from "../db/schema";
 
@@ -66,9 +66,10 @@ async function main() {
   ]).returning();
   const app = Object.fromEntries(appRows.map((a) => [a.key, a.id]));
 
+  const [client] = await db.insert(customers).values({ orgId: org.id, name: "Northwind Retail", weeklyGoalHours: 20, billingEmail: "ap@northwind.example" }).returning();
   const streamRows = await db.insert(streams).values([
-    { orgId: org.id, name: "Security audit", color: "#B8451A", position: 0, agentBudgetUsd: 25 },
-    { orgId: org.id, name: "Checkout redesign", color: "#1A1510", position: 1 },
+    { orgId: org.id, name: "Security audit", color: "#B8451A", position: 0, agentBudgetUsd: 25, customerId: client.id },
+    { orgId: org.id, name: "Checkout redesign", color: "#1A1510", position: 1, customerId: client.id },
     { orgId: org.id, name: "Mobile onboarding", color: "#5B6B4A", position: 2 },
     { orgId: org.id, name: "API v2", color: "#7A6F5D", position: 3, agentBudgetUsd: 40 },
   ]).returning();
@@ -142,7 +143,7 @@ async function main() {
   console.log(`[seed] organization "Atelier 14" (id ${org.id}, slug ${SLUG}) — invite code ${org.inviteCode}`);
   console.log(`[seed] humans: ${humans.map((h) => `${h.email} (${h.role})`).join(", ")} — password: ${PASSWORD}`);
   for (const [name, tok] of Object.entries(tokens)) console.log(`[seed] agent "${name}" token: ${tok}`);
-  console.log(`[seed] ${appRows.length} apps, ${streamRows.length} streams, ${spec.length} tasks, ${entries.length} time entries`);
+  console.log(`[seed] ${appRows.length} apps, 1 customer, ${streamRows.length} streams, ${spec.length} tasks, ${entries.length} time entries`);
 }
 
 main().then(() => process.exit(0)).catch((err) => { console.error("[seed] failed:", err); process.exit(1); });
