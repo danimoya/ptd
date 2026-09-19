@@ -209,7 +209,7 @@ export default function AppsTab() {
                     {a.archived ? <span className="stamp border-rule text-ink-muted ml-2">archived</span> : null}
                     {a.urls.length > 0 ? (
                       <div className="mt-0.5 flex flex-wrap gap-x-3">
-                        {a.urls.map((u) => (
+                        {a.urls.filter((u) => /^https?:\/\//i.test(u)).map((u) => (
                           <a key={u} href={u} target="_blank" rel="noreferrer noopener" className="text-[11px] font-mono text-ink-muted hover:text-vermilion focus-ink rounded-sm">
                             {u.replace(/^https?:\/\//, "")}
                           </a>

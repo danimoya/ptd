@@ -11,6 +11,11 @@ import { createWebhook, deleteWebhook, listWebhooks, testWebhook } from "../over
 
 /* ------------------------------------------------------------------ member+ */
 
+const httpUrl = z
+  .string()
+  .max(500)
+  .refine((u) => { try { const p = new URL(u).protocol; return p === "http:" || p === "https:"; } catch { return false; } }, "must be an http(s) URL");
+
 defineAction({
   name: "app.list",
   title: "List apps",
@@ -97,7 +102,7 @@ defineAction({
   input: z.object({
     key: z.string().min(1).max(64).describe("Short lowercase slug, e.g. `web` or `core-api`."),
     name: z.string().min(1).max(255).describe("Human-readable name."),
-    urls: z.array(z.string().max(500)).max(20).optional().describe("Live URLs for the app."),
+    urls: z.array(httpUrl).max(20).optional().describe("Live http(s) URLs for the app."),
     repo: z.string().max(255).optional().describe("Repository reference, e.g. `github:acme/web`."),
     stack: z.array(z.string().max(80)).max(30).optional().describe("Technologies, e.g. [\"Rust\",\"Postgres\"]."),
   }),
@@ -123,7 +128,7 @@ defineAction({
   input: z.object({
     appId: z.number().int().positive().describe("App id, from app.list."),
     name: z.string().min(1).max(255).optional(),
-    urls: z.array(z.string().max(500)).max(20).optional(),
+    urls: z.array(httpUrl).max(20).optional(),
     repo: z.string().max(255).nullable().optional(),
     stack: z.array(z.string().max(80)).max(30).optional(),
     archived: z.boolean().optional().describe("Archive hides the app from app.list and the KPI count without deleting its history."),
@@ -176,7 +181,12 @@ defineAction({
   input: z.object({
     url: z.string().min(1).max(500).describe("Absolute http(s) endpoint to POST to."),
     secret: z.string().min(8).max(200).optional().describe("HMAC key. Generated when omitted; returned once either way."),
-    events: z.array(z.string().max(48)).max(30).optional().describe('Event kinds to receive, or ["*"] for all (the default).'),
+    events: z.array(z.string().max(48)).max(30).optional().describe(
+      'Event kinds to receive, or ["*"] for all (the default). Task kinds carry a taskId and a {old,new} diff: ' +
+        "task.created, task.updated, task.completed, task.assigned, task.priority_changed, task.scheduled, task.unscheduled, " +
+        "task.cascade_shifted, task.stream_moved, task.deleted. Stream kinds have no taskId: stream.created, stream.updated, " +
+        "stream.renamed, stream.tasks_moved, stream.app_attached, stream.app_detached. webhook.test sends `ping`.",
+    ),
   }),
   requiredRole: "admin",
   surface: "org",
