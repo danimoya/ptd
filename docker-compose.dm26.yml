@@ -1,9 +1,15 @@
-# Host override for ptd.danimoya.com: joins NPM's network instead of publishing a port.
-# docker compose -f docker-compose.yml -f docker-compose.dm26.yml up -d --build
+# Host override for ptd.danimoya.com: joins NPM's network instead of publishing a port, and pins
+# the private subnet because this host has exhausted Docker's default address pools.
+# sudo docker compose -p ptd --env-file /etc/ptd/env -f docker-compose.yml -f docker-compose.dm26.yml up -d --build
 services:
   ptd:
     ports: !reset []
     networks: [ptd-internal, management-network]
 networks:
+  ptd-internal:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.250.7.0/24
   management-network:
     external: true
