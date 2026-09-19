@@ -14,7 +14,7 @@ import { registerActionsHttp } from "./actionsHttp";
 import { registerPlanRoutes } from "./plan/routes";
 import { registerTrackRoutes } from "./track/routes";
 import { registerOverviewRoutes } from "./overview/routes";
-import { registerBillingRoutes } from "./billing/routes"; // TEMP-BILLING-WIRING
+import { registerBillingRoutes } from "./billing/routes";
 import "./actions";
 
 export function registerRoutes(app: Express) {
@@ -34,6 +34,6 @@ export function registerRoutes(app: Express) {
   registerPlanRoutes(app);
   registerTrackRoutes(app);
   registerOverviewRoutes(app);
-  registerBillingRoutes(app); // TEMP-BILLING-WIRING
+  registerBillingRoutes(app);
   return httpServer;
 }

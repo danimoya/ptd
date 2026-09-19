@@ -4,4 +4,5 @@ import "./plan";
 import "./track";
 import "./overview";
 import "./oauth";
+import "./billing";
 export * from "./registry";
