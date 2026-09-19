@@ -6,6 +6,7 @@ import TokensTab from "@/features/org/TokensTab";
 import IntegrationsTab from "@/features/org/IntegrationsTab";
 import ApiTab from "@/features/org/ApiTab";
 import BillingTab from "@/features/org/BillingTab";
+import ImportTab from "@/features/org/ImportTab";
 import { useMe } from "@/hooks/use-me";
 
 const TABS = [
@@ -14,9 +15,10 @@ const TABS = [
   { to: "/org/tokens", label: "Tokens", num: "iii" },
   { to: "/org/integrations", label: "Integrations", num: "iv" },
   { to: "/org/api", label: "API", num: "v" },
+  { to: "/org/import", label: "Import", num: "vi" },
 ] as const;
 // Billing only exists on the hosted instance; self-hosted organizations never see it.
-const BILLING_TAB = { to: "/org/billing", label: "Billing", num: "vi" } as const;
+const BILLING_TAB = { to: "/org/billing", label: "Billing", num: "vii" } as const;
 
 /**
  * Org — who is in the organization, what credentials exist, and what the outside
@@ -68,6 +70,7 @@ export default function Org() {
         <Route path="tokens" element={<TokensTab />} />
         <Route path="integrations" element={<IntegrationsTab />} />
         <Route path="api" element={<ApiTab />} />
+        <Route path="import" element={<ImportTab />} />
         <Route path="billing" element={<BillingTab />} />
         <Route path="*" element={<Navigate to="/org" replace />} />
       </Routes>

@@ -3,6 +3,7 @@ import "./core";
 import "./plan";
 import "./track";
 import "./overview";
+import "./import";
 import "./oauth";
 import "./billing";
 import "./slack";
