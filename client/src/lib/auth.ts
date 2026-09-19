@@ -63,6 +63,16 @@ export function signOut(redirect = true) {
   }
 }
 
+/** Requests whose 401 is an expected answer (e.g. testing a pasted agent token against /mcp). */
+function isProbeRequest(input: RequestInfo | URL): boolean {
+  try {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    return new URL(url, window.location.origin).pathname === "/mcp";
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Global fetch wrapper: clears the token and redirects on 401.
  * Wrap `window.fetch` once at boot so every API call benefits.
@@ -71,7 +81,7 @@ export function installAuthInterceptor() {
   const original = window.fetch.bind(window);
   window.fetch = async (...args) => {
     const res = await original(...args);
-    if (res.status === 401) {
+    if (res.status === 401 && !isProbeRequest(args[0])) {
       // Only clear + redirect when we actually had a token — otherwise the
       // /auth page itself would loop.
       if (localStorage.getItem("token")) {
