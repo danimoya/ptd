@@ -1,9 +1,10 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { CalendarDays, Loader2, ShieldAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import CopyBlock from "../CopyBlock";
+import { Hint } from "../Hint";
 import { absoluteFeedUrl, calendarFeed, type FeedResult } from "./api";
 
 const SCOPES = [
@@ -75,15 +76,20 @@ export default function CalendarFeed({ canSeeOrg }: { canSeeOrg: boolean }) {
             ))}
           </select>
         </label>
-        <button
-          onClick={() => mint.mutate()}
-          disabled={mint.isPending}
-          className="stamp stamp-strong px-3 py-2 focus-ink inline-flex items-center gap-1.5 justify-self-start sm:justify-self-end"
-          data-testid="import-calendar-mint"
+        <Hint
+          side="left"
+          text="Shows a subscription URL with its own token inside it — anyone holding the link can read the feed. Pressing it again issues a fresh link and stops the old one."
         >
-          {mint.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-          {feed ? "New link" : "Show the link"}
-        </button>
+          <button
+            onClick={() => mint.mutate()}
+            disabled={mint.isPending}
+            className="stamp stamp-strong px-3 py-2 focus-ink inline-flex items-center gap-1.5 justify-self-start sm:justify-self-end"
+            data-testid="import-calendar-mint"
+          >
+            {mint.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+            {feed ? "New link" : "Show the link"}
+          </button>
+        </Hint>
       </div>
 
       {url ? (

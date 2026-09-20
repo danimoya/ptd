@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { Check, KeyRound, Link2, Link2Off, Loader2, Send, Slack, TriangleAlert, Unplug } from "lucide-react";
@@ -9,6 +9,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import CopyBlock from "../CopyBlock";
+import { Hint } from "../Hint";
 import {
   SLACK_STATUS_KEY, SLASH_COMMANDS, disconnectSlack, getSlackStatus, mintSlackLinkCode,
   setSlackChannel, slackInstallUrl, testSlack, unlinkSlack, type SlackLinkCode, type SlackTestResult,
@@ -201,16 +202,18 @@ export default function SlackCard() {
                   {saveChannel.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
                   <span className="eyebrow text-[9px] !text-current">save</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => sendTest.mutate()}
-                  disabled={sendTest.isPending || !data?.channelId}
-                  className="inline-flex items-center gap-1.5 px-3 h-[34px] border border-ink/40 hover:bg-ink hover:text-parchment transition-colors rounded-sm focus-ink disabled:opacity-60"
-                  data-testid="slack-test"
-                >
-                  {sendTest.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
-                  <span className="eyebrow text-[9px] !text-current">test</span>
-                </button>
+                <Hint text="Posts one real test message to the saved channel now. If the bot is not in that channel, Slack refuses and the error says so.">
+                  <button
+                    type="button"
+                    onClick={() => sendTest.mutate()}
+                    disabled={sendTest.isPending || !data?.channelId}
+                    className="inline-flex items-center gap-1.5 px-3 h-[34px] border border-ink/40 hover:bg-ink hover:text-parchment transition-colors rounded-sm focus-ink disabled:opacity-60"
+                    data-testid="slack-test"
+                  >
+                    {sendTest.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+                    <span className="eyebrow text-[9px] !text-current">test</span>
+                  </button>
+                </Hint>
               </form>
               {probe ? (
                 <div className={cn("mt-2 flex items-center gap-1.5 text-xs font-serif", probe.posted ? "text-sage" : "text-vermilion")} data-testid="slack-test-result">
@@ -245,15 +248,17 @@ export default function SlackCard() {
                 <p className="text-sm font-serif text-ink-muted">
                   Mint a one-time code, then run the command it gives you in Slack. Codes last ten minutes and work once.
                 </p>
-                <button
-                  onClick={() => mint.mutate()}
-                  disabled={mint.isPending}
-                  className="inline-flex items-center gap-1.5 px-3 h-[34px] border border-ink/40 hover:bg-ink hover:text-parchment transition-colors rounded-sm focus-ink disabled:opacity-60"
-                  data-testid="slack-mint-code"
-                >
-                  {mint.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <KeyRound className="h-3 w-3" />}
-                  <span className="eyebrow text-[9px] !text-current">mint a link code</span>
-                </button>
+                <Hint text="Gives you a one-time /ptd link command, good for ten minutes, that ties your Slack user to this PTD account — after that your slash commands run with your role.">
+                  <button
+                    onClick={() => mint.mutate()}
+                    disabled={mint.isPending}
+                    className="inline-flex items-center gap-1.5 px-3 h-[34px] border border-ink/40 hover:bg-ink hover:text-parchment transition-colors rounded-sm focus-ink disabled:opacity-60"
+                    data-testid="slack-mint-code"
+                  >
+                    {mint.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <KeyRound className="h-3 w-3" />}
+                    <span className="eyebrow text-[9px] !text-current">mint a link code</span>
+                  </button>
+                </Hint>
                 {code ? (
                   <div className="space-y-1" data-testid="slack-link-code">
                     <CopyBlock body={code.command} label={`expires ${new Date(code.expiresAt).toLocaleTimeString()}`} testId="slack-link-command" />
@@ -279,15 +284,17 @@ export default function SlackCard() {
           {data?.canManage ? (
             <div className="border-t border-rule pt-3">
               <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <button
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 border border-ink/40 text-ink-muted hover:border-vermilion hover:text-vermilion transition-colors rounded-sm focus-ink"
-                    data-testid="slack-disconnect"
-                  >
-                    <Unplug className="h-3 w-3" />
-                    <span className="eyebrow text-[9px] !text-current">disconnect</span>
-                  </button>
-                </AlertDialogTrigger>
+                <Hint text="Asks first, then unhooks the whole workspace: notifications stop and every /ptd command fails until someone re-installs the app.">
+                  <AlertDialogTrigger asChild>
+                    <button
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 border border-ink/40 text-ink-muted hover:border-vermilion hover:text-vermilion transition-colors rounded-sm focus-ink"
+                      data-testid="slack-disconnect"
+                    >
+                      <Unplug className="h-3 w-3" />
+                      <span className="eyebrow text-[9px] !text-current">disconnect</span>
+                    </button>
+                  </AlertDialogTrigger>
+                </Hint>
                 <AlertDialogContent className="bg-card border border-ink/30 rounded-sm">
                   <AlertDialogHeader>
                     <AlertDialogTitle className="font-display text-xl font-normal">Disconnect Slack?</AlertDialogTitle>

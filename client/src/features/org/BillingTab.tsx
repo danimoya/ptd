@@ -7,6 +7,8 @@ import { AlertTriangle, CheckCircle2, CreditCard, ExternalLink, Loader2, Refresh
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { useMe } from "@/hooks/use-me";
+import Explainer from "./Explainer";
+import { Hint } from "./Hint";
 import {
   BILLING_STATUS_KEY, getBillingStatus, openPortal, startCheckout, statusLabel, syncBilling,
   type BillingStatus,
@@ -113,6 +115,33 @@ export default function BillingTab() {
         </Banner>
       ) : null}
 
+      <Explainer
+        testId="billing-explainer"
+        why={
+          <>
+            One flat $15 a month for the whole organization — every person and every agent seat included, however many you add,
+            so growing the team never changes the bill. The free tier covers three seats so you can try PTD properly first, and
+            self-hosting stays free forever with no seat limit at all. Only the owner can start, change or cancel the
+            subscription.
+          </>
+        }
+        technical={
+          <>
+            <li>
+              Hosted only: <code>billing.status</code> answers <code>{"{ hosted: false }"}</code> on a self-hosted install and
+              this tab renders nothing at all — a self-hoster never meets a paywall.
+            </li>
+            <li>Upgrade hands you to Stripe Checkout; “manage billing” opens the Stripe customer portal for the card, invoices and cancellation.</li>
+            <li>
+              Seats count humans and agents together. At the free limit the next invitation — or the next{" "}
+              <code>/api/agent/register</code> — is refused with a plan error rather than billed.
+            </li>
+            <li>The plan flips when Stripe's webhook arrives; the success redirect often beats it, so “refresh” re-reads the subscription directly.</li>
+            <li>Cancelling keeps access to the end of the period already paid for, then drops the organization back to free.</li>
+          </>
+        }
+      />
+
       <section className="paper p-4" data-testid="billing-plan">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -134,43 +163,48 @@ export default function BillingTab() {
 
         <div className="mt-4 pt-3 border-t border-rule flex flex-wrap items-center gap-2">
           {isOwner && !isPaid ? (
-            <button
-              type="button"
-              onClick={() => upgrade.mutate()}
-              disabled={upgrade.isPending}
-              className="inline-flex items-center justify-center gap-2 px-4 h-[38px] border border-ink bg-ink text-parchment hover:bg-parchment hover:text-ink transition-colors rounded-sm focus-ink disabled:opacity-60"
-              data-testid="billing-upgrade"
-            >
-              {upgrade.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CreditCard className="h-3.5 w-3.5" />}
-              <span className="eyebrow text-[10px] !text-current">upgrade — $15/month</span>
-            </button>
+            <Hint text="Takes you to Stripe Checkout. Nothing is charged until you confirm there, and you come back to this page either way.">
+              <button
+                type="button"
+                onClick={() => upgrade.mutate()}
+                disabled={upgrade.isPending}
+                className="inline-flex items-center justify-center gap-2 px-4 h-[38px] border border-ink bg-ink text-parchment hover:bg-parchment hover:text-ink transition-colors rounded-sm focus-ink disabled:opacity-60"
+                data-testid="billing-upgrade"
+              >
+                {upgrade.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CreditCard className="h-3.5 w-3.5" />}
+                <span className="eyebrow text-[10px] !text-current">upgrade — $15/month</span>
+              </button>
+            </Hint>
           ) : null}
 
           {isOwner && s.portalAvailable ? (
-            <button
-              type="button"
-              onClick={() => portal.mutate()}
-              disabled={portal.isPending}
-              className="inline-flex items-center justify-center gap-2 px-4 h-[38px] border border-ink/40 hover:border-ink transition-colors rounded-sm focus-ink disabled:opacity-60"
-              data-testid="billing-portal"
-            >
-              {portal.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
-              <span className="eyebrow text-[10px] !text-current">manage billing</span>
-            </button>
+            <Hint text="Opens Stripe's own portal in place of this page: change the card, download invoices, or cancel at the end of the period.">
+              <button
+                type="button"
+                onClick={() => portal.mutate()}
+                disabled={portal.isPending}
+                className="inline-flex items-center justify-center gap-2 px-4 h-[38px] border border-ink/40 hover:border-ink transition-colors rounded-sm focus-ink disabled:opacity-60"
+                data-testid="billing-portal"
+              >
+                {portal.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
+                <span className="eyebrow text-[10px] !text-current">manage billing</span>
+              </button>
+            </Hint>
           ) : null}
 
           {isOwner ? (
-            <button
-              type="button"
-              onClick={() => sync.mutate(undefined)}
-              disabled={sync.isPending}
-              className="inline-flex items-center gap-1.5 px-2 h-[38px] text-ink-muted hover:text-ink transition-colors rounded-sm focus-ink disabled:opacity-60"
-              data-testid="billing-sync"
-              title="Re-read the subscription from Stripe"
-            >
-              <RefreshCw className={cn("h-3.5 w-3.5", sync.isPending && "animate-spin")} />
-              <span className="eyebrow text-[9px] !text-current">refresh</span>
-            </button>
+            <Hint text="Re-reads the subscription straight from Stripe. Useful when a payment has gone through but this page has not caught up yet.">
+              <button
+                type="button"
+                onClick={() => sync.mutate(undefined)}
+                disabled={sync.isPending}
+                className="inline-flex items-center gap-1.5 px-2 h-[38px] text-ink-muted hover:text-ink transition-colors rounded-sm focus-ink disabled:opacity-60"
+                data-testid="billing-sync"
+              >
+                <RefreshCw className={cn("h-3.5 w-3.5", sync.isPending && "animate-spin")} />
+                <span className="eyebrow text-[9px] !text-current">refresh</span>
+              </button>
+            </Hint>
           ) : null}
 
           {!isOwner ? <p className="text-sm font-serif italic text-ink-muted">Only the owner can change the subscription.</p> : null}

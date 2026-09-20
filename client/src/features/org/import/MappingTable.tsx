@@ -1,3 +1,4 @@
+import React from "react";
 import { AlertTriangle, ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { IGNORE_FIELD, type FieldChoice, type PreviewResult } from "./api";

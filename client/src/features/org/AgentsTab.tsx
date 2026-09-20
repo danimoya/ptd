@@ -1,10 +1,12 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, Check, Loader2, PlugZap, RefreshCw, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { getCurrentOrg, getInviteCode } from "@/lib/api";
 import CopyBlock from "./CopyBlock";
+import Explainer from "./Explainer";
+import { Hint } from "./Hint";
 import { buildSnippets, TOKEN_PLACEHOLDER } from "./snippets";
 import { probeMcp, type McpProbeResult } from "./api";
 
@@ -50,6 +52,45 @@ export default function AgentsTab() {
 
   return (
     <div className="space-y-5">
+      <Explainer
+        testId="agents-explainer"
+        why={
+          <>
+            An agent is a teammate, not a plug-in: it takes a seat, holds a role and carries its own token, and everything it
+            does lands in the same ledger as your people's work. The invite code below is how an agent lets itself in — its role
+            then decides which parts of PTD it can even see. Time an agent logs is stamped as an agent's, and can carry the
+            tokens and dollars it spent, so you can read what the robots cost you next to what they finished.
+          </>
+        }
+        technical={
+          <>
+            <li>
+              <code>POST /api/agent/register {"{ name, inviteCode }"}</code> creates the seat and answers once with a{" "}
+              <code>ptd_…</code> bearer token. A code-based registration always joins as <code>member</code> — it can never mint
+              itself a higher role.
+            </li>
+            <li>Regenerating the code invalidates the old one immediately; agents that already registered keep their tokens and their seats.</li>
+            <li>
+              The agent then speaks MCP over Streamable HTTP at <code>POST /mcp</code>. The tool list is filtered by its role, so
+              a member-token agent is offered fewer tools than a manager one.
+            </li>
+            <li>
+              Discovery lives at <code>/.well-known/ai-agent.json</code>. Claude.ai and ChatGPT connectors use OAuth 2.1 instead
+              of a pasted token — metadata at <code>/.well-known/oauth-authorization-server</code>.
+            </li>
+            <li>
+              “Test connection” POSTs a JSON-RPC <code>tools/list</code> to <code>/mcp</code> with the token in the field above.
+              It reads; it writes nothing.
+            </li>
+            <li>
+              Time logged by an agent is stamped <code>entry_source = "agent"</code> by the server, not by the agent, and may
+              carry token counts and USD cost. Monthly per-stream budgets (<code>streams.agent_budget_usd</code>) are what the
+              budget alerts measure against.
+            </li>
+          </>
+        }
+      />
+
       {/* ---------- invite code ---------- */}
       <section className="paper p-4">
         <div className="flex items-start justify-between gap-3">
@@ -60,15 +101,20 @@ export default function AgentsTab() {
               An agent registers itself with this code and lands as an ordinary <b>member</b> — same role gate as a human, no special path.
             </p>
           </div>
-          <button
-            onClick={() => regenerate.mutate()}
-            disabled={regenerate.isPending}
-            className="shrink-0 inline-flex items-center gap-2 px-3 py-1.5 border border-vermilion/60 text-vermilion hover:bg-vermilion hover:text-parchment transition-colors rounded-sm focus-ink disabled:opacity-60"
-            data-testid="regenerate-invite-code"
+          <Hint
+            side="left"
+            text="Mints a new invite code and kills the old one on the spot. Agents already registered keep working; anything still holding the old code cannot join."
           >
-            {regenerate.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-            <span className="eyebrow text-[10px] !text-current">regenerate</span>
-          </button>
+            <button
+              onClick={() => regenerate.mutate()}
+              disabled={regenerate.isPending}
+              className="shrink-0 inline-flex items-center gap-2 px-3 py-1.5 border border-vermilion/60 text-vermilion hover:bg-vermilion hover:text-parchment transition-colors rounded-sm focus-ink disabled:opacity-60"
+              data-testid="regenerate-invite-code"
+            >
+              {regenerate.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+              <span className="eyebrow text-[10px] !text-current">regenerate</span>
+            </button>
+          </Hint>
         </div>
         <div className="mt-3">
           {code.isLoading ? (
@@ -89,7 +135,10 @@ export default function AgentsTab() {
             <input value={agentName} onChange={(e) => setAgentName(e.target.value)} placeholder="Nightly Triage Bot" className="draft-input w-full mt-1 text-sm focus-ink" data-testid="agent-name" />
           </label>
           <label className="block">
-            <span className="eyebrow text-[9px]">token — paste one to make the snippets runnable</span>
+            <span className="eyebrow text-[9px] inline-flex items-center gap-1.5">
+              token — paste one to make the snippets runnable
+              <Hint text="Only filled into the snippets in your browser. Nothing is sent anywhere until you press Test connection." />
+            </span>
             <input
               value={token}
               onChange={(e) => { setToken(e.target.value); setProbe(null); }}
@@ -103,15 +152,17 @@ export default function AgentsTab() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <button
-            onClick={() => test.mutate()}
-            disabled={test.isPending || !token.trim()}
-            className="inline-flex items-center gap-2 px-4 py-2 border border-ink bg-ink text-parchment hover:bg-parchment hover:text-ink transition-colors rounded-sm focus-ink disabled:opacity-60"
-            data-testid="test-connection"
-          >
-            {test.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PlugZap className="h-3.5 w-3.5" />}
-            <span className="eyebrow text-[10px] !text-current">test connection</span>
-          </button>
+          <Hint text="Asks /mcp for the tool list with the token above — a read, never a write. It proves the token works and shows exactly which tools that role may call.">
+            <button
+              onClick={() => test.mutate()}
+              disabled={test.isPending || !token.trim()}
+              className="inline-flex items-center gap-2 px-4 py-2 border border-ink bg-ink text-parchment hover:bg-parchment hover:text-ink transition-colors rounded-sm focus-ink disabled:opacity-60"
+              data-testid="test-connection"
+            >
+              {test.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PlugZap className="h-3.5 w-3.5" />}
+              <span className="eyebrow text-[10px] !text-current">test connection</span>
+            </button>
+          </Hint>
           {probe ? (
             <span
               className={cn("inline-flex items-center gap-1.5 text-sm font-serif", probe.ok ? "text-sage" : "text-vermilion")}

@@ -1,9 +1,11 @@
-import { useMemo } from "react";
+import React, { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BookOpen, ExternalLink, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { listActions } from "@/lib/api";
 import CopyBlock from "./CopyBlock";
+import Explainer from "./Explainer";
+import { Hint } from "./Hint";
 import type { Role } from "../../../../db/schema";
 
 const SURFACE_ORDER = ["overview", "plan", "track", "org"] as const;
@@ -48,6 +50,38 @@ export default function ApiTab() {
 
   return (
     <div className="space-y-5">
+      <Explainer
+        testId="api-explainer"
+        why={
+          <>
+            Everything PTD can do is one list, and it is the same list whether a person clicks a button here, a script calls the
+            REST endpoint, an agent calls an MCP tool or someone types a slash command in Slack. Each entry names the lowest role
+            allowed to run it, so access is decided once and honoured everywhere. The list below is read from the running server
+            and filtered to your own role, so it cannot drift from what exists.
+          </>
+        }
+        technical={
+          <>
+            <li>
+              One action registry: every action declares a name, a schema and a required role, then is served over MCP (
+              <code>POST /mcp</code>), REST (<code>POST /api/actions/&lt;name&gt;</code>) and Slack.
+            </li>
+            <li>
+              OpenAPI 3.1 at <code>/openapi.json</code> — hand it to ChatGPT as an Actions schema, or to any client generator.
+            </li>
+            <li>
+              Agent discovery at <code>/.well-known/ai-agent.json</code> and a plain-text tour at <code>/llms.txt</code>; the
+              live registry itself is <code>/api/actions</code>.
+            </li>
+            <li>
+              Authenticate with <code>Authorization: Bearer ptd_…</code> (or this browser session's JWT) and pick the
+              organization with <code>X-Org-Id</code> when an account belongs to several.
+            </li>
+            <li>The role gate lives on the server: a token whose role is too low is refused, whatever the caller sends.</li>
+          </>
+        }
+      />
+
       <section className="paper p-4">
         <div className="eyebrow text-[9px]">One registry, three faces</div>
         <h3 className="font-display text-xl tracking-tight mt-0.5 flex items-center gap-2">
@@ -61,21 +95,22 @@ export default function ApiTab() {
         </p>
         <div className="flex flex-wrap gap-2 mt-3">
           {[
-            { href: "/.well-known/ai-agent.json", label: "ai-agent.json" },
-            { href: "/llms.txt", label: "llms.txt" },
-            { href: "/api/actions", label: "/api/actions" },
+            { href: "/.well-known/ai-agent.json", label: "ai-agent.json", hint: "Opens the machine-readable card an agent reads first: endpoints, how to authenticate and how to register itself." },
+            { href: "/llms.txt", label: "llms.txt", hint: "Opens the plain-text tour of this instance, written for a language model that has landed here with no other context." },
+            { href: "/api/actions", label: "/api/actions", hint: "Opens the live registry as JSON — the same data this page is built from, filtered to your role." },
           ].map((l) => (
-            <a
-              key={l.href}
-              href={l.href}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="stamp inline-flex items-center gap-1.5 hover:shadow-stamp transition-shadow focus-ink"
-              data-testid={`link-${l.label}`}
-            >
-              {l.label}
-              <ExternalLink className="h-2.5 w-2.5" />
-            </a>
+            <Hint key={l.href} text={l.hint}>
+              <a
+                href={l.href}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="stamp inline-flex items-center gap-1.5 hover:shadow-stamp transition-shadow focus-ink"
+                data-testid={`link-${l.label}`}
+              >
+                {l.label}
+                <ExternalLink className="h-2.5 w-2.5" />
+              </a>
+            </Hint>
           ))}
         </div>
         <div className="mt-3">

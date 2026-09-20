@@ -1,3 +1,4 @@
+import React from "react";
 import { CircleSlash, FilePlus2, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PreviewResult, PreviewRow } from "./api";

@@ -1,3 +1,4 @@
+import React from "react";
 import { Download, FileQuestion } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { templateUrl, type PreviewResult, type SourceArg, type SourceInfo } from "./api";

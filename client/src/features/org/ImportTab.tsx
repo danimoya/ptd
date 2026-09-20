@@ -1,10 +1,12 @@
-import { useCallback, useRef, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { AlertTriangle, CheckCircle2, ClipboardPaste, History, Loader2, Upload, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { canAccess, useMe } from "@/hooks/use-me";
+import Explainer from "./Explainer";
+import { Hint } from "./Hint";
 import CalendarFeed from "./import/CalendarFeed";
 import MappingTable from "./import/MappingTable";
 import PreviewGrid from "./import/PreviewGrid";
@@ -141,6 +143,37 @@ export default function ImportTab() {
 
   return (
     <div className="space-y-5">
+      <Explainer
+        testId="import-explainer"
+        why={
+          <>
+            Nobody should start from an empty board: bring across the backlog and the timesheets you already keep in Jira,
+            Trello, Asana, Linear, Notion, Toggl, Clockify or Harvest. PTD shows exactly what it is about to write before it
+            writes anything, and it recognises cards by their key in the old tool, so importing the same export twice updates
+            them instead of duplicating them. The calendar feed at the bottom sends dates the other way — into Google, Apple or
+            Outlook.
+          </>
+        }
+        technical={
+          <>
+            <li>CSV up to 5 MB, uploaded or pasted. The source tool is detected from the headers; you can override it and correct any column the guess got wrong.</li>
+            <li>
+              The preview is the server's own dry run, not a browser approximation — the counts above the Commit button are the
+              counts that will happen, and nothing is written until you press it.
+            </li>
+            <li>
+              Idempotent on <code>externalKey</code> (the issue key from the old tool, or a hash of the row when the file has
+              none), which is unique per organization: a second run reports updates, not duplicates.
+            </li>
+            <li>Imported time rows attach themselves to a card when the key matches one; rows with no lane of their own land in the default stream you name.</li>
+            <li>
+              The iCal feed is read-only — dates out, nothing in — and its URL carries its own token, because a calendar client
+              cannot send a header. Treat the link as a password and revoke its token in Org → Tokens to switch it off.
+            </li>
+          </>
+        }
+      />
+
       <section className="paper p-4">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -167,6 +200,7 @@ export default function ImportTab() {
         <div className="px-3 py-2 border-b border-rule flex items-center justify-between gap-2">
           <span className="microcaps flex items-center gap-2">
             <span className="section-num">i.</span> The file
+            <Hint text="Uploading writes nothing. PTD reads the file, guesses the source and hands back a dry run you can correct." />
           </span>
           {csv ? (
             <button onClick={clear} className="text-[11px] font-mono text-ink-muted hover:text-ink focus-ink inline-flex items-center gap-1" data-testid="import-clear">
@@ -306,15 +340,17 @@ export default function ImportTab() {
                   data-testid="import-default-stream"
                 />
               </label>
-              <button
-                type="button"
-                onClick={() => recheck.mutate({ text: csv, source, mapping: overrides, stream: defaultStreamName })}
-                disabled={busy}
-                className="stamp px-3 py-2 focus-ink inline-flex items-center gap-1.5 justify-self-start sm:justify-self-end"
-                data-testid="import-recheck"
-              >
-                {recheck.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : null} Re-check
-              </button>
+              <Hint text="Runs the dry run again with the mapping and default stream now on screen. Still a rehearsal — nothing is written.">
+                <button
+                  type="button"
+                  onClick={() => recheck.mutate({ text: csv, source, mapping: overrides, stream: defaultStreamName })}
+                  disabled={busy}
+                  className="stamp px-3 py-2 focus-ink inline-flex items-center gap-1.5 justify-self-start sm:justify-self-end"
+                  data-testid="import-recheck"
+                >
+                  {recheck.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : null} Re-check
+                </button>
+              </Hint>
             </div>
 
             <PreviewGrid preview={preview} />
@@ -361,15 +397,20 @@ export default function ImportTab() {
                 </p>
               ) : null}
             </div>
-            <button
-              onClick={() => commit.mutate()}
-              disabled={busy || !titleMapped || counts.create + counts.update === 0}
-              className="stamp stamp-strong px-4 py-2.5 focus-ink inline-flex items-center gap-1.5 disabled:opacity-40"
-              data-testid="import-commit"
+            <Hint
+              side="left"
+              text="The only button here that writes: it creates the new rows and updates the ones matched by their old key. Run it twice and the second pass updates rather than duplicates."
             >
-              {commit.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-              Write {counts.create + counts.update} row{counts.create + counts.update === 1 ? "" : "s"}
-            </button>
+              <button
+                onClick={() => commit.mutate()}
+                disabled={busy || !titleMapped || counts.create + counts.update === 0}
+                className="stamp stamp-strong px-4 py-2.5 focus-ink inline-flex items-center gap-1.5 disabled:opacity-40"
+                data-testid="import-commit"
+              >
+                {commit.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                Write {counts.create + counts.update} row{counts.create + counts.update === 1 ? "" : "s"}
+              </button>
+            </Hint>
           </div>
 
           {result ? (

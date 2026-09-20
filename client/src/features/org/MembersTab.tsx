@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, Loader2, Trash2, UserPlus } from "lucide-react";
 import {
@@ -11,6 +11,8 @@ import { getCurrentOrg, getMembers, inviteMember, removeMember, updateMemberRole
 import { useMe } from "@/hooks/use-me";
 import { ROLES, type Role } from "../../../../db/schema";
 import CopyBlock from "./CopyBlock";
+import Explainer from "./Explainer";
+import { Hint } from "./Hint";
 
 const ROLE_NOTE: Record<Role, string> = {
   owner: "Everything, including billing and handing the org to someone else.",
@@ -71,6 +73,42 @@ export default function MembersTab() {
 
   return (
     <div className="space-y-5">
+      <Explainer
+        testId="members-explainer"
+        why={
+          <>
+            This is the list of everyone who may open your ledger — people and agents in one roll, because a seat is a seat. A
+            role decides what each of them can do: owners and admins run the organization, managers shape the plan, members
+            track their own time and read the board. Everything else in PTD — who can see a budget, what an agent may touch —
+            is decided from this list, so it is the first thing to get right.
+          </>
+        }
+        technical={
+          <>
+            <li>
+              <code>memberships.role</code> is one of <code>owner</code> &gt; <code>admin</code> &gt; <code>manager</code> &gt;{" "}
+              <code>member</code>. Every action declares the minimum role it needs and the server checks it on each request, not
+              just in this UI.
+            </li>
+            <li>
+              Inviting writes an <code>invitations</code> row with the email, the role and a random token that expires after 7
+              days. Nothing is emailed: you hand over the token and the invitee accepts it at{" "}
+              <code>POST /api/invitations/accept</code> while signed in with that same address.
+            </li>
+            <li>Only an owner may change roles or hand the organization over, and the last owner cannot demote or remove themselves.</li>
+            <li>
+              Agents are ordinary rows here with <code>users.is_agent</code> set — same roles, a bearer token instead of a
+              password. The Agents tab is how one gets in.
+            </li>
+            <li>
+              One account can belong to several organizations. API callers choose which with the <code>X-Org-Id</code> header
+              (or <code>?orgId=</code>); otherwise the token's own organization is used.
+            </li>
+            <li>Removing a member frees the seat at once; the time entries and task events they made stay on the record.</li>
+          </>
+        }
+      />
+
       <section className="paper p-4">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div>
@@ -98,6 +136,7 @@ export default function MembersTab() {
           <div className="px-3 py-2 border-b border-rule flex items-center gap-2">
             <UserPlus className="h-3.5 w-3.5" />
             <span className="microcaps">Invite a person</span>
+            <Hint text="Creates an invitation token that lasts 7 days. Nothing is emailed — copy the token, send it yourself, and they accept it signed in with that address." />
           </div>
           <form
             onSubmit={(e) => {
@@ -228,11 +267,13 @@ function MemberRowItem({
 
       {canRemove ? (
         <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <button aria-label={`Remove ${member.displayName}`} className="text-ink-muted hover:text-vermilion focus-ink rounded-sm p-1.5" data-testid={`member-remove-${member.userId}`}>
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          </AlertDialogTrigger>
+          <Hint text={member.isAgent ? "Asks first, then takes the agent's seat away: its tokens stop working immediately and the work it logged stays." : "Asks first, then removes their access to this organization. Their logged time and task history stay on the record."}>
+            <AlertDialogTrigger asChild>
+              <button aria-label={`Remove ${member.displayName}`} className="text-ink-muted hover:text-vermilion focus-ink rounded-sm p-1.5" data-testid={`member-remove-${member.userId}`}>
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </AlertDialogTrigger>
+          </Hint>
           <AlertDialogContent className="bg-card border border-ink/30 rounded-sm">
             <AlertDialogHeader>
               <AlertDialogTitle className="font-display text-xl font-normal">Remove {member.displayName}?</AlertDialogTitle>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Github, Loader2, Plus, Send, ShieldAlert, Trash2, TriangleAlert, Webhook } from "lucide-react";
 import {
@@ -8,6 +8,8 @@ import {
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import CopyBlock from "./CopyBlock";
+import Explainer from "./Explainer";
+import { Hint } from "./Hint";
 import { createWebhook, deleteWebhook, listWebhooks, testWebhook, type CreatedWebhook, type WebhookTestResult } from "./api";
 import { ALL_EVENT_KINDS, EVENT_GROUPS, parseEvents, unknownEvents } from "./events";
 import SlackCard from "./slack/SlackCard";
@@ -80,6 +82,44 @@ export default function IntegrationsTab() {
 
   return (
     <div className="space-y-5">
+      <Explainer
+        testId="integrations-explainer"
+        why={
+          <>
+            This is how PTD tells the rest of your tools what just happened, so nobody has to copy a status across by hand. A
+            webhook POSTs every task event to a URL you own — n8n, Zapier, Make, a GitHub Action — while Slack puts assignments,
+            completions and agent-budget alerts where your team already talks. Slack runs the other way too: a{" "}
+            <code className="font-mono text-xs">/ptd</code> command acts as whoever linked their account, with that person's
+            role, so connecting a workspace never widens what anyone may do.
+          </>
+        }
+        technical={
+          <>
+            <li>
+              Each event is a JSON POST carrying <code>X-PTD-Signature: sha256=…</code>, the HMAC-SHA256 of the exact raw body
+              keyed with your secret. Verify it before trusting anything in the payload.
+            </li>
+            <li>
+              The signing secret is shown once and sealed with AES-256-GCM at rest (server key <code>PTD_SECRET_KEY</code>), so
+              PTD can sign with it but never display it again.
+            </li>
+            <li>
+              Delivery is fire-and-forget with a 5 second timeout — a slow or dead subscriber never holds up the task that
+              triggered it, and there is no retry queue.
+            </li>
+            <li>Subscribe to everything or name the kinds you want; an unknown kind is accepted and then never delivered.</li>
+            <li>
+              Slack commands run the same registry actions as this web app, as the linked PTD user and with their role. Linking
+              is <code>/ptd link &lt;code&gt;</code> with a one-time code that lasts ten minutes.
+            </li>
+            <li>
+              Slack needs <code>SLACK_CLIENT_ID</code>, <code>SLACK_CLIENT_SECRET</code> and <code>SLACK_SIGNING_SECRET</code> on
+              the server, and the bot has to be invited to the notification channel before it can post there.
+            </li>
+          </>
+        }
+      />
+
       <section className="paper p-4">
         <div className="eyebrow text-[9px]">Outgoing</div>
         <h3 className="font-display text-xl tracking-tight mt-0.5 flex items-center gap-2">
@@ -113,6 +153,7 @@ export default function IntegrationsTab() {
           <div className="px-3 py-2 border-b border-rule flex items-center gap-2">
             <Plus className="h-3.5 w-3.5" />
             <span className="microcaps">Add a webhook</span>
+            <Hint text="Saves the subscription and shows its signing secret once. Events start being POSTed to that URL as soon as it is saved." />
           </div>
           <form
             onSubmit={(e) => {
@@ -152,7 +193,10 @@ export default function IntegrationsTab() {
               <span className="eyebrow text-[10px] !text-current">add</span>
             </button>
             <label className="block sm:col-span-3">
-              <span className="eyebrow text-[9px]">signing secret — leave blank and one is generated for you</span>
+              <span className="eyebrow text-[9px] inline-flex items-center gap-1.5">
+                signing secret — leave blank and one is generated for you
+                <Hint text="The key your endpoint uses to verify X-PTD-Signature. Shown once when the webhook is created, then sealed at rest — PTD cannot read it back to you." />
+              </span>
               <input value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="whsec_…" spellCheck={false} autoComplete="off" className="draft-input w-full mt-1 text-sm font-mono focus-ink" data-testid="webhook-secret-input" />
             </label>
 
@@ -214,21 +258,25 @@ export default function IntegrationsTab() {
                         {!w.enabled ? <span className="text-vermilion">disabled</span> : null}
                       </div>
                     </div>
-                    <button
-                      onClick={() => probe.mutate(w.id)}
-                      disabled={probe.isPending}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 border border-ink/40 hover:bg-ink hover:text-parchment transition-colors rounded-sm focus-ink disabled:opacity-60"
-                      data-testid={`webhook-test-${w.id}`}
-                    >
-                      {probe.isPending && probe.variables === w.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
-                      <span className="eyebrow text-[9px] !text-current">test</span>
-                    </button>
+                    <Hint text="POSTs a signed test event to this URL right now and reports what came back — the fastest way to tell a broken endpoint from a broken signature.">
+                      <button
+                        onClick={() => probe.mutate(w.id)}
+                        disabled={probe.isPending}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 border border-ink/40 hover:bg-ink hover:text-parchment transition-colors rounded-sm focus-ink disabled:opacity-60"
+                        data-testid={`webhook-test-${w.id}`}
+                      >
+                        {probe.isPending && probe.variables === w.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+                        <span className="eyebrow text-[9px] !text-current">test</span>
+                      </button>
+                    </Hint>
                     <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <button aria-label={`Delete webhook ${w.url}`} className="text-ink-muted hover:text-vermilion focus-ink rounded-sm p-1.5" data-testid={`webhook-delete-${w.id}`}>
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </AlertDialogTrigger>
+                      <Hint text="Asks first, then stops deliveries to this URL and destroys its signing secret. Adding it back means a new secret and a new verification key.">
+                        <AlertDialogTrigger asChild>
+                          <button aria-label={`Delete webhook ${w.url}`} className="text-ink-muted hover:text-vermilion focus-ink rounded-sm p-1.5" data-testid={`webhook-delete-${w.id}`}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </AlertDialogTrigger>
+                      </Hint>
                       <AlertDialogContent className="bg-card border border-ink/30 rounded-sm">
                         <AlertDialogHeader>
                           <AlertDialogTitle className="font-display text-xl font-normal">Delete this webhook?</AlertDialogTitle>

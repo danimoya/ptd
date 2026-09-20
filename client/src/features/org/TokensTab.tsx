@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { KeyRound, Loader2, Plus, ShieldAlert, Trash2 } from "lucide-react";
@@ -10,6 +10,8 @@ import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { createToken, getTokens, revokeToken, type TokenRow } from "@/lib/api";
 import CopyBlock from "./CopyBlock";
+import Explainer from "./Explainer";
+import { Hint } from "./Hint";
 
 const day = (v: string | null) => (v ? format(new Date(v), "d MMM yyyy") : "—");
 const EXPIRY_CHOICES = [
@@ -58,6 +60,39 @@ export default function TokensTab() {
 
   return (
     <div className="space-y-5">
+      <Explainer
+        testId="tokens-explainer"
+        why={
+          <>
+            A token is a password for a program: it lets a script, an editor or an agent act as you, with exactly your role and
+            never more. You see the secret once, the moment it is minted — after that PTD keeps only a hash, so a token is
+            replaced rather than recovered. If one leaks, revoke it and everything still holding it stops working immediately.
+          </>
+        }
+        technical={
+          <>
+            <li>
+              Format <code>ptd_</code> + an 8-character lookup prefix + the secret. Only the prefix is stored in the clear; the
+              rest is salted scrypt, which is why it cannot be shown to you twice.
+            </li>
+            <li>
+              Send it as <code>Authorization: Bearer ptd_…</code> to <code>POST /api/actions/&lt;name&gt;</code>, to{" "}
+              <code>/mcp</code>, or to any REST route.
+            </li>
+            <li>
+              A token carries your membership and your current role in this organization — demote the user and the token is
+              demoted with them.
+            </li>
+            <li>An expiry (30, 90 or 365 days) makes it start answering 401 on its own. Revoking is immediate and cannot be undone.</li>
+            <li>
+              <code>POST /api/tokens/rotate</code> is the panic button: it revokes every active token you hold in this
+              organization and mints one replacement.
+            </li>
+            <li>Calendar subscriptions mint their own named token here — revoke it and the .ics link goes dead.</li>
+          </>
+        }
+      />
+
       <section className="paper p-4">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -98,6 +133,7 @@ export default function TokensTab() {
           <div className="px-3 py-2 border-b border-rule flex items-center gap-2">
             <Plus className="h-3.5 w-3.5" />
             <span className="microcaps">Mint a token</span>
+            <Hint text="Creates a token and shows the secret once, on the next panel. Copy it then — the server keeps only a hash of it." />
           </div>
           <form
             onSubmit={(e) => {
@@ -188,11 +224,13 @@ function TokenList({
               </div>
               {onRevoke ? (
                 <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <button aria-label={`Revoke ${t.name}`} className="text-ink-muted hover:text-vermilion focus-ink rounded-sm p-1.5" data-testid={`token-revoke-${t.id}`}>
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </AlertDialogTrigger>
+                  <Hint text="Asks first, then kills this token: anything still using it starts failing with 401 straight away. It cannot be un-revoked — mint a replacement.">
+                    <AlertDialogTrigger asChild>
+                      <button aria-label={`Revoke ${t.name}`} className="text-ink-muted hover:text-vermilion focus-ink rounded-sm p-1.5" data-testid={`token-revoke-${t.id}`}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </AlertDialogTrigger>
+                  </Hint>
                   <AlertDialogContent className="bg-card border border-ink/30 rounded-sm">
                     <AlertDialogHeader>
                       <AlertDialogTitle className="font-display text-xl font-normal">Revoke “{t.name}”?</AlertDialogTitle>
