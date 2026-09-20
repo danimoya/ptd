@@ -25,8 +25,10 @@ cp .env.example .env            # set DB_PASSWORD and JWT_SECRET
 docker compose up -d --build    # http://localhost:3001
 ```
 
-Ships with [HeliosDB-Nano](https://heliosdb.com) as the database; set
-`PTD_DB_IMAGE=postgres:16-alpine` in `.env` to use stock Postgres instead.
+Ships with [HeliosDB-Nano](https://heliosdb.com) as the database, built and
+configured by `docker-compose.yml`. The app speaks the Postgres wire protocol and
+the migrations are plain SQL, so pointing `DATABASE_URL` at your own Postgres works
+too — see [docs/self-hosting.md](docs/self-hosting.md#using-stock-postgres-instead).
 Migrations run automatically on container start.
 
 Hosted version: <https://ptd.danimoya.com> — flat $15/month per organization.
@@ -59,6 +61,34 @@ Then point any MCP client at `https://ptd.danimoya.com/mcp` with
 Which tools the agent sees depends on the role you gave it — the same role
 gate applies over MCP, REST, Slack and every other adapter.
 
+## CLI
+
+```bash
+npx ptd-cli login --url https://ptd.danimoya.com   # or: npm i -g ptd-cli
+ptd next                                           # highest-priority task, with the arithmetic
+ptd start SEC-3 && ptd stop --tokens 1200 --cost 0.04
+ptd run task.totals --taskId=3                     # any action, by name
+```
+
+`ptd` is a zero-dependency Node client: aligned tables by default, `--json` for
+piping, and `ptd run <action>` for everything the CLI has no verb for. Full command
+list in [docs/cli.md](docs/cli.md); sources in [`cli/`](cli).
+
+## Documentation
+
+| Guide | Covers |
+|---|---|
+| [docs/concepts.md](docs/concepts.md) | Organizations, roles, streams/apps/tasks, the 0–100 priority score, why human-vs-agent attribution cannot be spoofed |
+| [docs/self-hosting.md](docs/self-hosting.md) | Compose deployment, every environment variable, the database image's security facts, backups, upgrades, reverse proxies |
+| [docs/agents.md](docs/agents.md) | Agent seats, MCP configuration, OAuth 2.1 connectors, reporting tokens and cost, the `next_task` loop |
+| [docs/api.md](docs/api.md) | Auth, `X-Org-Id`, `POST /api/actions/<name>`, errors, and a generated reference of every action |
+| [docs/cli.md](docs/cli.md) | The `ptd` command-line client |
+| [docs/integrations.md](docs/integrations.md) | Webhooks and their signatures, Slack, CSV importers, the iCal feed |
+| [docs/billing.md](docs/billing.md) | Hosted plan, free tier, and why self-hosting has no billing code at all |
+| [docs/security.md](docs/security.md) | Credentials, transport, secrets at rest, rate limits, tenancy, what is out of scope |
+
+Start at [docs/README.md](docs/README.md).
+
 ## Develop
 
 ```bash
@@ -67,7 +97,14 @@ export DATABASE_URL=postgres://postgres:pw@127.0.0.1:5432/heliosdb JWT_SECRET=de
 npm run migrate && npm run seed   # demo org with humans, agents, streams, tasks
 npm run dev                       # API + Vite on :3001
 npm run check && npm test
+npm run docs                      # regenerate the action reference in docs/api.md
+
+npm install --prefix cli && npm test --prefix cli   # the CLI has its own package
 ```
+
+`docs/api.md`'s action reference is generated from the live registry by
+`scripts/gen-docs.ts`. Add or change an action and run `npm run docs`;
+`npm run docs -- --check` fails if it is stale.
 
 ## License
 

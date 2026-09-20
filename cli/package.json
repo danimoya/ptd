@@ -1,0 +1,39 @@
+{
+  "name": "ptd-cli",
+  "version": "0.1.0",
+  "description": "Command-line client for PTD — Plan Track Done. Every command is a registry action over HTTPS.",
+  "license": "MIT",
+  "repository": "github:danimoya/ptd",
+  "homepage": "https://ptd.danimoya.com",
+  "type": "module",
+  "bin": {
+    "ptd": "./dist/ptd.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "esbuild src/ptd.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/ptd.js --banner:js='#!/usr/bin/env node' && chmod +x dist/ptd.js",
+    "check": "tsc",
+    "test": "vitest run",
+    "prepack": "npm run build"
+  },
+  "keywords": [
+    "ptd",
+    "cli",
+    "time-tracking",
+    "task-tracker",
+    "mcp",
+    "agents"
+  ],
+  "devDependencies": {
+    "@types/node": "20.16.11",
+    "esbuild": "^0.24.0",
+    "typescript": "5.6.3",
+    "vitest": "^3.2.4"
+  }
+}
