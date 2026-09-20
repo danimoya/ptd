@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AlertTriangle, ArrowRight, Check, Loader2, Plug, ShieldCheck, X } from "lucide-react";
-import { StudioMasthead, StudioRibbon } from "@/components/StudioMasthead";
 import { isTokenExpired, signOut } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import {
@@ -338,12 +337,18 @@ function Plate({
   return (
     <div className="min-h-screen w-full bg-paper-2/60 px-6 py-10 md:py-16 flex justify-center">
       <div className="w-full max-w-xl">
-        <div className="flex items-center justify-between gap-4 mb-8">
-          <StudioMasthead size="sm" />
+        <div className="flex items-end justify-between gap-4 mb-8">
+          <span className="flex flex-col leading-none">
+            <span className="eyebrow text-[10px] text-vermilion/90">Plan · Track · Done</span>
+            <span className="mt-1 font-display text-[28px] font-light tracking-tight text-ink">
+              <span className="font-semibold">PTD</span>
+              <span className="text-vermilion">.</span>
+            </span>
+          </span>
           <span className="microcaps hidden sm:inline">Connector desk</span>
         </div>
         <div className="border border-rule bg-paper p-6 md:p-8 shadow-stamp">
-          <StudioRibbon label={ribbon} className="mb-5" />
+          <Ribbon label={ribbon} />
           <h2 className="font-display text-3xl md:text-4xl tracking-tightest text-ink flex items-start gap-3">
             <Plug className="h-6 w-6 mt-1.5 shrink-0 text-vermilion" />
             <span>{heading}</span>
@@ -353,6 +358,17 @@ function Plate({
         </div>
         <p className="microcaps mt-6 text-center">OAuth 2.1 · authorization code + PKCE · MCP 2025-06-18</p>
       </div>
+    </div>
+  );
+}
+
+/** The ruled label above the heading — the page's own, so no shared masthead is needed. */
+function Ribbon({ label }: { label: string }) {
+  return (
+    <div className="microcaps flex items-center gap-2 mb-5">
+      <span className="inline-block h-px w-6 bg-ink/60" />
+      {label}
+      <span className="inline-block h-px w-6 bg-ink/60" />
     </div>
   );
 }

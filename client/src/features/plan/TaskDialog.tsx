@@ -27,7 +27,7 @@ interface TaskDialogProps {
 }
 
 /**
- * The card editor — Kanttban's Edit Card dialog with PTD's extra columns
+ * The card editor — the original board's Edit Card dialog with PTD's extra columns
  * (app, priority triangle, tags) and two read-only panels: the card's history
  * and the time logged against it by the Track surface.
  *

@@ -53,7 +53,7 @@ interface DialogState {
 const CLOSED: DialogState = { open: false, task: null, defaultStartDate: null, defaultStreamId: null };
 
 /**
- * The Plan surface: Kanttban's backlog ⇄ Gantt board, plus a Cascade mode that
+ * The Plan surface: the original board's backlog ⇄ Gantt board, plus a Cascade mode that
  * reads the same data as a dependency tree.
  *
  * This component owns the one DndContext the whole surface shares — that is what

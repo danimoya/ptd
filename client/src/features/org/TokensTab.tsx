@@ -22,7 +22,7 @@ const EXPIRY_CHOICES = [
 ] as const;
 
 /**
- * Kanttban's TokenManager on PTD's endpoints. The full secret exists in exactly
+ * the original board's TokenManager on PTD's endpoints. The full secret exists in exactly
  * one response and is never round-tripped from the server again, which is why the
  * reveal panel blocks the form until it is dismissed.
  */

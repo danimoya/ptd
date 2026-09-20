@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 /* =========================================================================
-   TimeTracker — Almanac / Ledger aesthetic
+   PTD — ledger aesthetic
    Parchment palette · Fraunces display · Newsreader body · JetBrains Mono
    ========================================================================= */
 
@@ -285,7 +285,7 @@
 
 /* =========================================================================
    Landing / marketing utilities — shared "drafting studio" vocabulary.
-   Ported so the public landing reads as the same document set as Kanttban.
+   Ported so the public landing reads as one document set across surfaces.
    ========================================================================= */
 
 @layer components {

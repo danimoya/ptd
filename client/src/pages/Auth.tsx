@@ -1,11 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+// Classic JSX transform (tsconfig keeps jsx: "preserve"), so React must be in scope.
+import React, { useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowRight, Check, Copy, Loader2 } from "lucide-react";
-import { StudioMasthead, StudioRibbon } from "@/components/StudioMasthead";
-import { LandingSheets, SheetIndex } from "@/components/LandingSheets";
-import { FloatingLoginBar } from "@/components/FloatingLoginBar";
-import { DemoChronograph } from "@/components/DemoChronograph";
 import { cn } from "@/lib/utils";
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * The way in.
+ *
+ * Three doors on one plate: sign in, open an organization, or — if the
+ * visitor is an agent — take a seat and walk away with a token. The public
+ * page carries the argument; this page only takes credentials.
+ * ───────────────────────────────────────────────────────────────────────── */
 
 type Mode = "login" | "register" | "agent";
 
@@ -19,103 +24,58 @@ interface AgentSignupResult {
   manifest?: { mcp?: { tools?: { name: string; title: string }[] } };
 }
 
+function modeFromQuery(value: string | null): Mode {
+  if (value === "register") return "register";
+  if (value === "agent") return "agent";
+  return "login";
+}
+
 export default function Auth() {
   const navigate = useNavigate();
-  const [mode, setMode] = useState<Mode>("login");
+  const [params] = useSearchParams();
+  const [mode, setMode] = useState<Mode>(() => modeFromQuery(params.get("mode")));
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [orgName, setOrgName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Agent self-service
   const [agentName, setAgentName] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const [agentEmail, setAgentEmail] = useState("");
   const [agentResult, setAgentResult] = useState<AgentSignupResult | null>(null);
-  const [pastFold, setPastFold] = useState(false);
-  const [barBusy, setBarBusy] = useState(false);
 
-  const formRef = useRef<HTMLElement>(null);
-
-  // Once the form plate has scrolled completely out of view, a short sign-in
-  // form floats into the top navigation so the visitor never has to scroll back.
-  useEffect(() => {
-    const el = formRef.current;
-    if (!el || typeof IntersectionObserver === "undefined") return;
-    const observer = new IntersectionObserver(
-      ([entry]) => setPastFold(entry.boundingClientRect.bottom <= 0),
-      { threshold: 0 }
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
-  // The closing call to action sends the visitor back up to the form with the
-  // right tab already selected.
-  const startWith = useCallback((next: "signin" | "register" | "agent") => {
-    setAgentResult(null);
-    setMode(next === "signin" ? "login" : next);
-    const reduced =
-      typeof window !== "undefined" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    formRef.current?.scrollIntoView({
-      behavior: reduced ? "auto" : "smooth",
-      block: "start",
-    });
-  }, []);
-
-  // Sign-in from the floating top bar. Same token hand-off as the form plate's
-  // login path, without touching the shared form state.
-  const barSignIn = async (loginEmail: string, loginPassword: string) => {
-    setBarBusy(true);
-    try {
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: loginEmail, password: loginPassword }),
-      });
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        return {
-          ok: false as const,
-          message: (data.error as string) || "Authentication failed",
-        };
-      }
-      const data = await response.json();
-      if (!data.token) {
-        return { ok: false as const, message: "No token received" };
-      }
-      localStorage.setItem("token", data.token);
-      if (data.user?.email) localStorage.setItem("userEmail", data.user.email);
-      navigate("/");
-      window.location.reload();
-      return { ok: true as const };
-    } finally {
-      setBarBusy(false);
-    }
+  const switchTo = (next: Mode) => {
+    setMode(next);
+    setError(null);
   };
 
   const submit = async () => {
     setBusy(true);
     setError(null);
     try {
+      const payload: Record<string, string> = { email: email.trim(), password };
+      if (mode === "register") {
+        if (displayName.trim()) payload.displayName = displayName.trim();
+        if (orgName.trim()) payload.orgName = orgName.trim();
+      }
       const response = await fetch(`/api/auth/${mode}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify(payload),
       });
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || "Authentication failed");
+        throw new Error(data.message || data.error || "Those credentials were not accepted");
       }
       const data = await response.json();
-      if (data.token) {
-        localStorage.setItem("token", data.token);
-        if (data.user?.email) localStorage.setItem("userEmail", data.user.email);
-        navigate("/");
-        window.location.reload();
-      } else {
-        throw new Error("No token received");
-      }
+      if (!data.token) throw new Error("No token came back — try again");
+      localStorage.setItem("token", data.token);
+      if (data.user?.email) localStorage.setItem("userEmail", data.user.email);
+      navigate("/");
+      window.location.reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not sign you in");
     } finally {
@@ -128,6 +88,7 @@ export default function Auth() {
     setError(null);
     try {
       const payload: Record<string, string> = { name: agentName.trim() };
+      if (inviteCode.trim()) payload.inviteCode = inviteCode.trim();
       if (agentEmail.trim()) payload.email = agentEmail.trim();
       const res = await fetch("/api/agent/register", {
         method: "POST",
@@ -135,341 +96,290 @@ export default function Auth() {
         body: JSON.stringify(payload),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(body?.message || body?.error || `HTTP ${res.status}`);
-      }
+      if (!res.ok) throw new Error(body?.message || body?.error || `HTTP ${res.status}`);
       setAgentResult(body as AgentSignupResult);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not provision agent");
+      setError(e instanceof Error ? e.message : "Could not open the seat");
     } finally {
       setBusy(false);
     }
   };
 
-  const ribbon = agentResult
-    ? "Service account opened"
-    : mode === "register"
-      ? "New ledger"
-      : mode === "agent"
-        ? "Agent service account"
-        : "Open ledger";
-
   const heading = agentResult
     ? "Save the token"
     : mode === "register"
-      ? "Begin a ledger"
+      ? "Create an organization"
       : mode === "agent"
-        ? "Open an agent account"
-        : "Welcome back";
+        ? "Take a seat"
+        : "Sign in";
 
   const subhead = agentResult
-    ? "It is shown exactly once. Copy it into your agent's config now."
+    ? "It is shown exactly once. Copy it into the agent's config before you leave this page."
     : mode === "register"
-      ? "Create credentials and start keeping the hours."
+      ? "One organization, four surfaces, every person and agent on the same roll."
       : mode === "agent"
-        ? "Provision a service account for an AI agent — bearer-token auth, MCP-ready."
-        : "Sign in to your ledger. Your hours are exactly where you left them.";
+        ? "Open a seat for an AI agent — bearer-token auth, ready for MCP, REST and the connectors."
+        : "Your work is where you left it.";
 
   return (
-    <div className="w-full">
-      <FloatingLoginBar
-        visible={pastFold && !agentResult}
-        busy={barBusy}
-        onSignIn={barSignIn}
-        onOpenFull={startWith}
-      />
-      <div className="min-h-screen w-full grid grid-cols-1 lg:grid-cols-[1.05fr_0.95fr]">
-        {/* ─────────── LEFT — Editorial masthead pane ─────────── */}
-        <aside className="relative overflow-hidden border-b lg:border-b-0 lg:border-r border-rule px-8 pt-12 md:px-16 md:pt-20 flex flex-col justify-between">
-          <div className="reveal reveal-1 flex items-center justify-between gap-4">
-            <StudioMasthead size="sm" />
-            <span className="microcaps hidden md:inline">Hours ledger</span>
-          </div>
+    <div className="grain min-h-[100dvh]">
+      <div className="relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-lg flex-col px-5 py-8 sm:px-8 sm:py-12">
+        <Link to="/welcome" className="focus-ink flex flex-col leading-none">
+          <span className="eyebrow text-[9px] text-vermilion/90">Plan · Track · Done</span>
+          <span className="font-display mt-1 text-[28px] font-light tracking-tight">
+            <span className="font-semibold">PTD</span>
+            <span className="text-vermilion">.</span>
+          </span>
+        </Link>
 
-          <div className="my-12 lg:my-14 max-w-2xl">
-            <h2 className="font-display reveal reveal-2 text-5xl md:text-6xl xl:text-7xl leading-[0.95] tracking-tightest text-ink">
-              Time the work.
-              <br />
-              Keep the{" "}
-              <em className="italic text-vermilion">ledger</em>.
-            </h2>
-            <p className="reveal reveal-3 mt-7 text-lg text-ink-2 max-w-lg leading-relaxed text-pretty">
-              A private chronicle of hours spent — live timers, retroactive
-              entries and the totals that reconcile against them. For the people
-              working the day and the agents you let log alongside them.
-            </p>
+        <div className="my-8 flex items-center gap-3">
+          <span className="h-px flex-1 bg-ink/70" />
+          <span className="eyebrow text-[10px] text-ink">Same task, same source of truth — human or agent</span>
+          <span className="h-px flex-1 bg-ink/70" />
+        </div>
 
-            <DemoChronograph className="reveal reveal-4 mt-9 max-w-xl" />
-          </div>
+        <main className="flex-1">
+          <h1 className="font-display text-[2rem] leading-tight tracking-[-0.025em] text-ink sm:text-[2.4rem]">
+            {heading}
+          </h1>
+          <p className="mt-2 mb-8 text-[1rem] leading-relaxed text-ink-muted text-pretty">{subhead}</p>
 
-          <SheetIndex className="reveal reveal-5 -mx-8 md:-mx-16" />
-        </aside>
+          {agentResult ? (
+            <AgentResultPanel
+              result={agentResult}
+              onClose={() => {
+                setAgentResult(null);
+                setMode("login");
+                setAgentName("");
+                setInviteCode("");
+                setAgentEmail("");
+              }}
+            />
+          ) : mode === "agent" ? (
+            <form
+              className="space-y-5"
+              onSubmit={(e) => {
+                e.preventDefault();
+                submitAgent();
+              }}
+            >
+              <p className="border border-rule bg-card p-4 text-[0.9rem] leading-relaxed text-ink-muted">
+                With an invite code the agent lands as a member of that organization. Without one it opens an
+                organization of its own. Either way it gets a{" "}
+                <span className="font-numeric text-[0.8rem] text-ink">ptd_</span> token to send on every call, and
+                the role decides which of the 85 tools it may use.
+              </p>
 
-        {/* ─────────── RIGHT — Form plate ─────────── */}
-        <section
-          id="start"
-          ref={formRef}
-          className="relative flex items-start justify-center px-6 py-12 md:px-12 md:py-16 bg-paper-2/60 scroll-mt-0"
-        >
-          <div className="w-full max-w-md reveal reveal-3 lg:sticky lg:top-12">
-            <StudioRibbon label={ribbon} className="mb-6" />
+              <Field label="Agent name" hint="How it will appear on the roll">
+                <input
+                  className="draft-input w-full"
+                  placeholder="Nightly Triage Bot"
+                  value={agentName}
+                  onChange={(e) => setAgentName(e.target.value)}
+                  required
+                />
+              </Field>
 
-            <h3 className="font-display text-4xl md:text-5xl tracking-tightest text-ink mb-2">
-              {heading}
-            </h3>
-            <p className="text-ink-3 mb-8">{subhead}</p>
+              <Field label="Invite code" hint="Optional — from your organization's Org tab">
+                <input
+                  className="draft-input w-full font-mono text-sm"
+                  placeholder="f9d9e8013717f6c0"
+                  value={inviteCode}
+                  onChange={(e) => setInviteCode(e.target.value)}
+                  autoComplete="off"
+                />
+              </Field>
 
-            {agentResult ? (
-              <AgentResultPanel
-                result={agentResult}
-                onClose={() => {
-                  setAgentResult(null);
-                  setMode("login");
-                  setAgentName("");
-                  setAgentEmail("");
-                }}
-              />
-            ) : mode === "agent" ? (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  submitAgent();
-                }}
-                className="space-y-5"
-              >
-                <div className="border border-rule bg-paper p-4 text-xs text-ink-3 leading-relaxed">
-                  Open a service account for an AI agent. Returns a single bearer
-                  token (<span className="font-mono">ttm_…</span>) it should send
-                  on every MCP / REST call. The token is shown once. Discovery
-                  lives at{" "}
-                  <a
-                    href="/.well-known/ai-agent.json"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="font-mono text-oxford hover:underline"
-                  >
-                    /.well-known/ai-agent.json
-                  </a>
-                  .
-                </div>
+              <Field label="Email" hint="Optional — lets a human take it over later">
+                <input
+                  type="email"
+                  className="draft-input w-full"
+                  placeholder="ops@example.com"
+                  value={agentEmail}
+                  onChange={(e) => setAgentEmail(e.target.value)}
+                  autoComplete="off"
+                />
+              </Field>
 
-                <Field label="Agent name" hint="Free-form label, e.g. 'Helios Scribe'">
-                  <input
-                    className="draft-input w-full"
-                    placeholder="Helios Scribe"
-                    value={agentName}
-                    onChange={(e) => setAgentName(e.target.value)}
-                    required
-                  />
-                </Field>
+              {error && <ErrorNote>{error}</ErrorNote>}
 
-                <Field
-                  label="Email"
-                  hint="Optional — for human takeover via password reset"
-                >
-                  <input
-                    type="email"
-                    className="draft-input w-full"
-                    placeholder="ops@studio.cv"
-                    value={agentEmail}
-                    onChange={(e) => setAgentEmail(e.target.value)}
-                    autoComplete="off"
-                  />
-                </Field>
+              <Submit busy={busy} disabled={!agentName.trim()}>
+                Open the seat
+              </Submit>
 
-                {error && (
-                  <div className="border border-vermilion/40 bg-vermilion/10 px-3 py-2 text-sm font-serif italic text-vermilion">
-                    {error}
-                  </div>
-                )}
+              <ModeSwitcher mode={mode} setMode={switchTo} />
+            </form>
+          ) : (
+            <form
+              className="space-y-5"
+              onSubmit={(e) => {
+                e.preventDefault();
+                submit();
+              }}
+            >
+              <Field label="Email">
+                <input
+                  type="email"
+                  className="draft-input w-full"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  autoComplete="email"
+                />
+              </Field>
 
-                <button
-                  type="submit"
-                  disabled={busy || !agentName.trim()}
-                  className={cn(
-                    "group relative w-full px-5 py-3 bg-ink text-paper font-medium",
-                    "border border-ink transition-all duration-150",
-                    "hover:bg-paper hover:text-ink hover:shadow-stamp hover:-translate-x-px hover:-translate-y-px",
-                    "disabled:opacity-60 disabled:cursor-not-allowed",
-                    "flex items-center justify-center gap-2"
-                  )}
-                >
-                  {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-                  <span className="microcaps !text-current">
-                    Provision service account
-                  </span>
-                  <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-                </button>
+              <Field label="Password" hint={mode === "register" ? "At least six characters" : undefined}>
+                <input
+                  type="password"
+                  className="draft-input w-full font-mono"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  minLength={6}
+                  autoComplete={mode === "login" ? "current-password" : "new-password"}
+                />
+              </Field>
 
-                <ModeSwitcher mode={mode} setMode={setMode} />
-              </form>
-            ) : (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  submit();
-                }}
-                className="space-y-5"
-              >
-                <Field label="Correspondence" hint="Used to sign in">
-                  <input
-                    type="email"
-                    className="draft-input w-full"
-                    placeholder="name@house.domain"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    autoComplete="email"
-                  />
-                </Field>
+              {mode === "register" && (
+                <>
+                  <Field label="Your name" hint="Optional">
+                    <input
+                      className="draft-input w-full"
+                      placeholder="Elena Draftworks"
+                      value={displayName}
+                      onChange={(e) => setDisplayName(e.target.value)}
+                      autoComplete="name"
+                    />
+                  </Field>
+                  <Field label="Organization name" hint="Optional — you can rename it later">
+                    <input
+                      className="draft-input w-full"
+                      placeholder="Atelier 14"
+                      value={orgName}
+                      onChange={(e) => setOrgName(e.target.value)}
+                      autoComplete="organization"
+                    />
+                  </Field>
+                </>
+              )}
 
-                <Field
-                  label="Secret hand"
-                  hint={mode === "register" ? "At least six letters" : ""}
-                >
-                  <input
-                    type="password"
-                    className="draft-input w-full font-mono"
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    minLength={6}
-                    autoComplete={
-                      mode === "login" ? "current-password" : "new-password"
-                    }
-                  />
-                </Field>
+              {error && <ErrorNote>{error}</ErrorNote>}
 
-                {error && (
-                  <div className="border border-vermilion/40 bg-vermilion/10 px-3 py-2 text-sm font-serif italic text-vermilion">
-                    {error}
-                  </div>
-                )}
+              <Submit busy={busy} disabled={!email || !password}>
+                {mode === "login" ? "Sign in" : "Create the organization"}
+              </Submit>
 
-                <div className="pt-2 space-y-3">
-                  <button
-                    type="submit"
-                    disabled={busy || !email || !password}
-                    className={cn(
-                      "group relative w-full px-5 py-3 bg-ink text-paper font-medium",
-                      "border border-ink transition-all duration-150",
-                      "hover:bg-paper hover:text-ink hover:shadow-stamp hover:-translate-x-px hover:-translate-y-px",
-                      "disabled:opacity-60 disabled:cursor-not-allowed",
-                      "flex items-center justify-center gap-2"
-                    )}
-                  >
-                    {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-                    <span className="microcaps !text-current">
-                      {mode === "login" ? "Open the ledger" : "Begin your chronicle"}
-                    </span>
-                    <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-                  </button>
+              <ModeSwitcher mode={mode} setMode={switchTo} />
+            </form>
+          )}
+        </main>
 
-                  <ModeSwitcher mode={mode} setMode={setMode} />
-                </div>
-              </form>
-            )}
-          </div>
-        </section>
+        <footer className="mt-10 flex items-center justify-between gap-3 border-t border-rule pt-4">
+          <Link to="/welcome" className="focus-ink font-numeric text-[11px] text-ink-muted hover:text-ink">
+            What PTD does
+          </Link>
+          <span className="eyebrow text-[10px]">Open core · MIT</span>
+        </footer>
       </div>
-
-      <LandingSheets onStart={startWith} />
     </div>
   );
 }
 
-function ModeSwitcher({
-  mode,
-  setMode,
+function Submit({
+  busy,
+  disabled,
+  children,
 }: {
-  mode: Mode;
-  setMode: (m: Mode) => void;
+  busy: boolean;
+  disabled?: boolean;
+  children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-1 pt-1">
-      {mode !== "login" && (
-        <button
-          type="button"
-          onClick={() => setMode("login")}
-          className="w-full text-sm text-ink-3 hover:text-ink transition-colors py-1"
-        >
-          Already have a ledger? Sign in instead →
-        </button>
+    <button
+      type="submit"
+      disabled={busy || disabled}
+      className={cn(
+        "focus-ink group flex w-full items-center justify-center gap-2 border border-ink bg-ink px-5 py-3",
+        "font-numeric text-[11px] uppercase tracking-[0.18em] text-parchment transition-all duration-150",
+        "hover:-translate-x-px hover:-translate-y-px hover:bg-parchment hover:text-ink hover:shadow-stamp",
+        "disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-x-0 disabled:hover:translate-y-0",
+        "disabled:hover:bg-ink disabled:hover:text-parchment disabled:hover:shadow-none"
       )}
-      {mode !== "register" && (
-        <button
-          type="button"
-          onClick={() => setMode("register")}
-          className="w-full text-sm text-ink-3 hover:text-ink transition-colors py-1"
-        >
-          Need a ledger? Open one →
-        </button>
-      )}
-      {mode !== "agent" && (
-        <button
-          type="button"
-          onClick={() => setMode("agent")}
-          className="w-full text-sm text-ink-3 hover:text-oxford transition-colors py-1"
-        >
-          Are you an AI agent? Open a service account →
-        </button>
-      )}
+    >
+      {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+      {children}
+      <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+    </button>
+  );
+}
+
+function ErrorNote({ children }: { children: React.ReactNode }) {
+  return (
+    <p role="alert" className="border border-vermilion/50 bg-vermilion/5 px-3 py-2 text-[0.9rem] text-vermilion">
+      {children}
+    </p>
+  );
+}
+
+function ModeSwitcher({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void }) {
+  const options: { key: Mode; label: string }[] = [
+    { key: "login", label: "Already have an account? Sign in" },
+    { key: "register", label: "Need an organization? Create one" },
+    { key: "agent", label: "Are you an agent? Take a seat" },
+  ];
+  return (
+    <div className="flex flex-col items-start gap-1 border-t border-rule pt-3">
+      {options
+        .filter((o) => o.key !== mode)
+        .map((o) => (
+          <button
+            key={o.key}
+            type="button"
+            onClick={() => setMode(o.key)}
+            className="focus-ink py-1 text-[0.9rem] text-ink-muted transition-colors hover:text-ink"
+          >
+            {o.label}
+          </button>
+        ))}
     </div>
   );
 }
 
-function AgentResultPanel({
-  result,
-  onClose,
-}: {
-  result: AgentSignupResult;
-  onClose: () => void;
-}) {
-  const [copied, setCopied] = useState<"token" | "header" | "discovery" | null>(
-    null
-  );
-  const copy = async (
-    key: "token" | "header" | "discovery",
-    value: string
-  ) => {
+function AgentResultPanel({ result, onClose }: { result: AgentSignupResult; onClose: () => void }) {
+  const [copied, setCopied] = useState<"token" | "header" | "discovery" | null>(null);
+
+  const copy = async (key: "token" | "header" | "discovery", value: string) => {
     try {
       await navigator.clipboard.writeText(value);
       setCopied(key);
-      setTimeout(() => setCopied((c) => (c === key ? null : c)), 1500);
+      window.setTimeout(() => setCopied((c) => (c === key ? null : c)), 1500);
     } catch {
-      /* clipboard might be blocked — value is on screen */
+      /* clipboard can be blocked — the value is on screen either way */
     }
   };
 
-  const origin =
-    typeof window !== "undefined" ? window.location.origin : "https://ttm.foor.tech";
-  const mcpUrl = result.mcp_url.startsWith("http")
-    ? result.mcp_url
-    : `${origin}${result.mcp_url}`;
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const mcpUrl = result.mcp_url.startsWith("http") ? result.mcp_url : `${origin}${result.mcp_url}`;
   const discoveryUrl = `${origin}${result.discovery_url}`;
   const toolCount = result.manifest?.mcp?.tools?.length ?? 0;
 
   return (
     <div className="space-y-5">
-      <div className="border border-vermilion/60 bg-vermilion/5 p-4 text-xs text-ink-2 leading-relaxed">
-        <span className="microcaps text-vermilion block mb-1">One-time</span>
-        The bearer token below is shown <em>only on this screen</em>. After you
-        leave it cannot be recovered — mint a new one if it is lost.
-      </div>
+      <p className="border border-vermilion/60 bg-vermilion/5 p-4 text-[0.9rem] leading-relaxed text-ink-muted">
+        <span className="eyebrow mb-1 block text-vermilion">Shown once</span>
+        The token below cannot be recovered after you leave this page. If it is lost, mint a new one from the Org
+        tab.
+      </p>
 
-      <Section label="Account">
+      <Section label="Seat">
         <KV k="email" v={result.user.email} />
-        <KV k="organization" v={`${result.org.name} (id ${result.org.id}, ${result.org.role})`} />
+        <KV k="organization" v={`${result.org.name} · ${result.org.role}`} />
       </Section>
 
       <Section label="Bearer token">
-        <CopyRow
-          mono
-          value={result.token.secret}
-          copied={copied === "token"}
-          onCopy={() => copy("token", result.token.secret)}
-        />
+        <CopyRow mono value={result.token.secret} copied={copied === "token"} onCopy={() => copy("token", result.token.secret)} />
         <CopyRow
           mono
           subtle
@@ -480,8 +390,7 @@ function AgentResultPanel({
       </Section>
 
       <Section label="Endpoints">
-        <KV k="MCP" v={mcpUrl} mono />
-        <KV k="Discovery" v={result.discovery_url} mono />
+        <KV k="mcp" v={mcpUrl} mono />
         <CopyRow
           mono
           subtle
@@ -492,14 +401,12 @@ function AgentResultPanel({
       </Section>
 
       {toolCount > 0 && (
-        <Section label={`Tools available (${toolCount})`}>
-          <ul className="text-xs text-ink-2 space-y-1">
+        <Section label={`Tools this role may call (${toolCount})`}>
+          <ul className="max-h-48 space-y-1 overflow-y-auto text-[0.8rem]">
             {result.manifest!.mcp!.tools!.map((t) => (
               <li key={t.name} className="flex gap-2">
-                <span className="font-mono text-oxford whitespace-nowrap">
-                  {t.name}
-                </span>
-                <span className="text-ink-3 truncate">— {t.title}</span>
+                <span className="font-numeric whitespace-nowrap text-[0.75rem] text-vermilion">{t.name}</span>
+                <span className="truncate text-ink-muted">{t.title}</span>
               </li>
             ))}
           </ul>
@@ -510,13 +417,12 @@ function AgentResultPanel({
         type="button"
         onClick={onClose}
         className={cn(
-          "group relative w-full px-5 py-3 bg-ink text-paper font-medium",
-          "border border-ink transition-all duration-150",
-          "hover:bg-paper hover:text-ink hover:shadow-stamp hover:-translate-x-px hover:-translate-y-px",
-          "flex items-center justify-center gap-2"
+          "focus-ink group flex w-full items-center justify-center gap-2 border border-ink bg-ink px-5 py-3",
+          "font-numeric text-[11px] uppercase tracking-[0.18em] text-parchment transition-all duration-150",
+          "hover:-translate-x-px hover:-translate-y-px hover:bg-parchment hover:text-ink hover:shadow-stamp"
         )}
       >
-        <span className="microcaps !text-current">I have saved the token</span>
+        I have saved the token
         <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
       </button>
     </div>
@@ -526,7 +432,7 @@ function AgentResultPanel({
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="border-t border-rule pt-3">
-      <div className="microcaps mb-2">{label}</div>
+      <div className="eyebrow mb-2">{label}</div>
       <div className="space-y-1.5">{children}</div>
     </div>
   );
@@ -534,11 +440,9 @@ function Section({ label, children }: { label: string; children: React.ReactNode
 
 function KV({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
   return (
-    <div className="flex items-baseline justify-between gap-3 text-xs">
-      <span className="text-ink-3 microcaps">{k}</span>
-      <span className={cn("text-ink truncate text-right", mono && "font-mono")}>
-        {v}
-      </span>
+    <div className="flex items-baseline justify-between gap-3 text-[0.8rem]">
+      <span className="eyebrow text-[10px]">{k}</span>
+      <span className={cn("truncate text-right text-ink", mono && "font-numeric")}>{v}</span>
     </div>
   );
 }
@@ -557,59 +461,29 @@ function CopyRow({
   subtle?: boolean;
 }) {
   return (
-    <div
-      className={cn(
-        "flex items-center gap-2 border px-2.5 py-1.5",
-        subtle ? "border-rule bg-paper" : "border-ink bg-paper-2"
-      )}
-    >
-      <code
-        className={cn(
-          "flex-1 truncate text-[11px]",
-          mono && "font-mono",
-          subtle ? "text-ink-3" : "text-ink"
-        )}
-        title={value}
-      >
+    <div className={cn("flex items-center gap-2 border px-2.5 py-1.5", subtle ? "border-rule bg-card" : "border-ink bg-parchment-deep/50")}>
+      <code className={cn("flex-1 truncate text-[11px]", mono && "font-mono", subtle ? "text-ink-muted" : "text-ink")} title={value}>
         {value}
       </code>
       <button
         type="button"
         onClick={onCopy}
-        className={cn(
-          "shrink-0 inline-flex items-center gap-1 text-[11px] microcaps px-2 py-1 border border-rule",
-          "hover:border-ink hover:text-ink transition-colors"
-        )}
+        className="focus-ink inline-flex shrink-0 items-center gap-1 border border-rule px-2 py-1 font-numeric text-[10px] uppercase tracking-[0.12em] transition-colors hover:border-ink hover:text-ink"
       >
-        {copied ? (
-          <>
-            <Check className="h-3 w-3" /> copied
-          </>
-        ) : (
-          <>
-            <Copy className="h-3 w-3" /> copy
-          </>
-        )}
+        {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+        {copied ? "copied" : "copy"}
       </button>
     </div>
   );
 }
 
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <div className="flex items-baseline justify-between mb-1.5">
-        <span className="microcaps">{label}</span>
-        {hint && <span className="text-[11px] text-ink-4">{hint}</span>}
-      </div>
+      <span className="mb-1.5 flex items-baseline justify-between gap-2">
+        <span className="eyebrow">{label}</span>
+        {hint && <span className="text-[0.75rem] text-ink-muted">{hint}</span>}
+      </span>
       {children}
     </label>
   );

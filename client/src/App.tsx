@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import Layout from "./components/Layout";
 import Auth from "./pages/Auth";
+import Landing from "./pages/Landing";
 import OAuthConsent from "./pages/OAuthConsent";
 import Overview from "./pages/Overview";
 import Plan from "./pages/Plan";
@@ -31,14 +32,24 @@ function Home() {
   return <Navigate to={home} replace />;
 }
 
+/** `/` is the public page for a visitor and the role-based redirect for a member. */
+function Root() {
+  if (isTokenExpired()) {
+    if (localStorage.getItem("token")) signOut(false);
+    return <Landing />;
+  }
+  return <Home />;
+}
+
 export default function App() {
   return (
     <Router>
       <Routes>
         <Route path="/auth" element={<Auth />} />
         <Route path="/oauth/consent" element={<OAuthConsent />} />
+        <Route path="/" element={<Root />} />
+        <Route path="/welcome" element={<Landing />} />
         <Route element={<Layout />}>
-          <Route path="/" element={<ProtectedRoute><Home /></ProtectedRoute>} />
           <Route path="/overview/*" element={<ProtectedRoute><RequireRole min="manager"><Overview /></RequireRole></ProtectedRoute>} />
           <Route path="/plan/*" element={<ProtectedRoute><RequireRole min="manager"><Plan /></RequireRole></ProtectedRoute>} />
           <Route path="/track/*" element={<ProtectedRoute><Track /></ProtectedRoute>} />
