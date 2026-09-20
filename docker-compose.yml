@@ -33,8 +33,10 @@ services:
       DATABASE_SSL: "true"
       DATABASE_SSL_CA: /tls/server.crt
       PORT: "3001"
+      PTD_FILES_DIR: /data/files
     volumes:
       - ptd_db_tls:/tls:ro
+      - ptd_files:/data/files
     ports:
       - "${PTD_PORT:-3001}:3001"
     depends_on: [ptd-db]
@@ -43,6 +45,7 @@ services:
 volumes:
   ptd_db_data:
   ptd_db_tls:
+  ptd_files:
 
 networks:
   ptd-internal:
