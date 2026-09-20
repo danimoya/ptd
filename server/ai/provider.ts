@@ -19,12 +19,15 @@
  * ever logged when PTD_AI_DEBUG is set. The info-level line carries model,
  * tokens, cost and duration — never the text.
  */
+import { and, eq } from "drizzle-orm";
+import { orgIntegrations } from "../../db/schema";
+import { decryptSecret, encryptSecret } from "../crypto";
 import {
   DEFAULT_MODELS,
   estimateCostUsd,
   type AiProviderName,
 } from "./pricing";
-import { recordCall, type AiCallRecord } from "./usage";
+import { currentUsageScope, recordCall, type AiCallRecord } from "./usage";
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -67,6 +70,11 @@ export interface AiConfig {
   apiKey: string;
   baseUrl: string;
   timeoutMs: number;
+  /**
+   * Whose key this is: the organization's own (`org`) or the deployment's
+   * (`env`). It decides whether the call is metered — see server/billing/metering.ts.
+   */
+  source?: "org" | "env";
 }
 
 export type AiEnv = Record<string, string | undefined>;
@@ -97,7 +105,223 @@ export function aiConfigFromEnv(env: AiEnv = process.env): AiConfig | null {
     apiKey,
     baseUrl: env.PTD_AI_BASE_URL?.trim() ? normaliseBase(env.PTD_AI_BASE_URL) : DEFAULT_BASE_URLS[provider],
     timeoutMs: Number.isFinite(timeout) && timeout > 0 ? timeout : AI_TIMEOUT_MS,
+    source: "env",
   };
+}
+
+/* ── an organization's own key ────────────────────────────────────────────── */
+
+/**
+ * On the hosted instance an organization may bring its own provider key, and most
+ * should: its calls then cost PTD nothing and are metered nowhere. The key is sealed
+ * with AES-256-GCM under `PTD_SECRET_KEY` (server/crypto.ts) in `org_integrations`
+ * under kind `ai` — the same envelope the Slack and GitHub credentials use — and is
+ * never returned by any action. `keyHint` (last four characters) is what the UI
+ * shows so an admin can tell two keys apart.
+ *
+ * `../../db` is imported lazily, exactly as server/ai/usage.ts does it, so the
+ * provider tests keep running without a database.
+ */
+export const AI_KIND = "ai";
+
+export interface OrgAiKeyConfig {
+  provider: AiProviderName;
+  model?: string;
+  apiKeySealed: string;
+  keyHint: string;
+  baseUrl?: string;
+  connectedAt: string;
+  connectedBy: number | null;
+}
+
+/** What an action may say out loud about an organization's key. */
+export interface OrgAiKeyView {
+  connected: boolean;
+  provider: AiProviderName | null;
+  model: string | null;
+  keyHint: string | null;
+  connectedAt: string | null;
+  connectedBy: number | null;
+}
+
+export const NO_ORG_AI_KEY: OrgAiKeyView = {
+  connected: false,
+  provider: null,
+  model: null,
+  keyHint: null,
+  connectedAt: null,
+  connectedBy: null,
+};
+
+async function database() {
+  return (await import("../../db")).db;
+}
+
+function keyHint(key: string): string {
+  const tail = key.trim().slice(-4);
+  return tail.length === 4 ? `…${tail}` : "…";
+}
+
+function asOrgKeyConfig(raw: unknown): OrgAiKeyConfig | null {
+  const c = (raw ?? {}) as Partial<OrgAiKeyConfig>;
+  if (!isProvider(c.provider) || typeof c.apiKeySealed !== "string" || c.apiKeySealed === "") return null;
+  return {
+    provider: c.provider,
+    ...(typeof c.model === "string" && c.model ? { model: c.model } : {}),
+    apiKeySealed: c.apiKeySealed,
+    keyHint: typeof c.keyHint === "string" ? c.keyHint : "…",
+    ...(typeof c.baseUrl === "string" && c.baseUrl ? { baseUrl: c.baseUrl } : {}),
+    connectedAt: typeof c.connectedAt === "string" ? c.connectedAt : "",
+    connectedBy: typeof c.connectedBy === "number" ? c.connectedBy : null,
+  };
+}
+
+export function orgKeyView(config: OrgAiKeyConfig | null): OrgAiKeyView {
+  if (!config) return { ...NO_ORG_AI_KEY };
+  return {
+    connected: true,
+    provider: config.provider,
+    model: config.model ?? DEFAULT_MODELS[config.provider],
+    keyHint: config.keyHint,
+    connectedAt: config.connectedAt || null,
+    connectedBy: config.connectedBy,
+  };
+}
+
+export async function readOrgAiKey(orgId: number): Promise<OrgAiKeyConfig | null> {
+  const db = await database();
+  const [row] = await db
+    .select({ config: orgIntegrations.config, enabled: orgIntegrations.enabled })
+    .from(orgIntegrations)
+    .where(and(eq(orgIntegrations.orgId, orgId), eq(orgIntegrations.kind, AI_KIND)))
+    .limit(1);
+  if (!row || row.enabled === false) return null;
+  return asOrgKeyConfig(row.config);
+}
+
+/** Seal a key onto the organization, replacing whatever was there. */
+export async function connectOrgAiKey(
+  orgId: number,
+  input: { provider: AiProviderName; apiKey: string; model?: string; baseUrl?: string },
+  userId: number | null,
+): Promise<OrgAiKeyView> {
+  const db = await database();
+  const config: OrgAiKeyConfig = {
+    provider: input.provider,
+    ...(input.model?.trim() ? { model: input.model.trim() } : {}),
+    apiKeySealed: encryptSecret(input.apiKey.trim()),
+    keyHint: keyHint(input.apiKey),
+    ...(input.baseUrl?.trim() ? { baseUrl: normaliseBase(input.baseUrl) } : {}),
+    connectedAt: new Date().toISOString(),
+    connectedBy: userId,
+  };
+  const [existing] = await db
+    .select({ id: orgIntegrations.id })
+    .from(orgIntegrations)
+    .where(and(eq(orgIntegrations.orgId, orgId), eq(orgIntegrations.kind, AI_KIND)))
+    .limit(1);
+  if (existing) {
+    await db
+      .update(orgIntegrations)
+      .set({ config: config as unknown as Record<string, unknown>, enabled: true, createdBy: userId })
+      .where(eq(orgIntegrations.id, existing.id));
+  } else {
+    await db
+      .insert(orgIntegrations)
+      .values({ orgId, kind: AI_KIND, config: config as unknown as Record<string, unknown>, enabled: true, createdBy: userId });
+  }
+  return orgKeyView(config);
+}
+
+export async function disconnectOrgAiKey(orgId: number): Promise<{ disconnected: boolean }> {
+  const db = await database();
+  const rows = await db
+    .delete(orgIntegrations)
+    .where(and(eq(orgIntegrations.orgId, orgId), eq(orgIntegrations.kind, AI_KIND)))
+    .returning({ id: orgIntegrations.id });
+  return { disconnected: rows.length > 0 };
+}
+
+/** The organization's own configuration, opened for one call. */
+export function configFromOrgKey(config: OrgAiKeyConfig, env: AiEnv = process.env): AiConfig {
+  const timeout = Number(env.PTD_AI_TIMEOUT_MS ?? "");
+  let apiKey: string;
+  try {
+    apiKey = decryptSecret(config.apiKeySealed);
+  } catch {
+    // Tolerate a plaintext value seeded by an operator's script, the way
+    // server/usage/store.ts does.
+    apiKey = config.apiKeySealed;
+  }
+  return {
+    provider: config.provider,
+    model: config.model || DEFAULT_MODELS[config.provider],
+    apiKey,
+    baseUrl: config.baseUrl ? normaliseBase(config.baseUrl) : DEFAULT_BASE_URLS[config.provider],
+    timeoutMs: Number.isFinite(timeout) && timeout > 0 ? timeout : AI_TIMEOUT_MS,
+    source: "org",
+  };
+}
+
+export interface ResolvedAi {
+  config: AiConfig | null;
+  source: "org" | "env" | null;
+  /** Whether the organization brought its own key. */
+  orgKey: OrgAiKeyView;
+  /** Whether this deployment has a key of its own to fall back on. */
+  serverConfigured: boolean;
+}
+
+/**
+ * Which key answers for this organization: its own first, the deployment's second.
+ *
+ * The order is deliberate. An organization that has connected a key has said "bill
+ * me directly"; falling back to PTD's key would quietly start charging it cost + 20%
+ * for calls it is already paying for.
+ */
+export async function resolveAiConfig(orgId: number, env: AiEnv = process.env): Promise<ResolvedAi> {
+  const fromEnv = aiConfigFromEnv(env);
+  let stored: OrgAiKeyConfig | null = null;
+  try {
+    stored = await readOrgAiKey(orgId);
+  } catch (err) {
+    // A missing row is null; a broken read must not take the whole action down.
+    console.warn("[ai] could not read the organization's key:", err instanceof Error ? err.message : err);
+  }
+  if (stored) {
+    return { config: configFromOrgKey(stored, env), source: "org", orgKey: orgKeyView(stored), serverConfigured: Boolean(fromEnv) };
+  }
+  return { config: fromEnv, source: fromEnv ? "env" : null, orgKey: { ...NO_ORG_AI_KEY }, serverConfigured: Boolean(fromEnv) };
+}
+
+/* ── metering hook ────────────────────────────────────────────────────────── */
+
+export interface AiMeterCall {
+  orgId: number;
+  userId: number | null;
+  provider: AiProviderName;
+  model: string;
+  label: string;
+  at: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  /** Whose key paid. Only `env` — PTD's own — is ever billed on. */
+  source: "org" | "env";
+}
+
+export type AiMeterHook = (call: AiMeterCall) => void;
+
+let meterHook: AiMeterHook | null = null;
+
+/**
+ * Installed by server/actions/ai.ts at import time, so a provider call made on the
+ * hosted instance with PTD's key lands on the `ptd_ai_usage_cents` meter. The
+ * provider layer knows the cost and the key's origin; only the billing layer knows
+ * what to do with them — which is why this is a hook and not an import.
+ */
+export function setAiMeterHook(hook: AiMeterHook | null): void {
+  meterHook = hook;
 }
 
 export interface AiStatus {
@@ -237,6 +461,28 @@ export async function completeJSON<T>(
       ok,
     };
     recordCall(record);
+
+    // The organization that is paying comes from the usage scope the action set;
+    // without one (a unit test, a script) there is nobody to bill.
+    const scope = currentUsageScope();
+    if (meterHook && scope && ok) {
+      try {
+        meterHook({
+          orgId: scope.orgId,
+          userId: scope.userId,
+          provider: usage.provider,
+          model: usage.model,
+          label,
+          at: record.at,
+          inputTokens,
+          outputTokens,
+          costUsd,
+          source: config.source ?? "env",
+        });
+      } catch (err) {
+        console.warn("[ai] metering hook threw:", err instanceof Error ? err.message : err);
+      }
+    }
     // Info level: numbers only. The prompt carries card titles and descriptions.
     console.log(
       `[ai] ${label} ${usage.provider}/${usage.model} in=${inputTokens} out=${outputTokens} ` +

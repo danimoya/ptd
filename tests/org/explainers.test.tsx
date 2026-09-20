@@ -29,10 +29,21 @@ const ROUTES: Record<string, unknown> = {
   "/api/actions/webhook.list": [],
   "/api/actions/slack.status": { appConfigured: false, connected: false, canManage: true, scopes: [], teamId: null, teamName: null, botUserId: null, channelId: null, installedAt: null, installedBy: null, linked: false, slackUserId: null, linkedWorkspaces: [] },
   "/api/actions/import.history": { runs: [], taskEventsViaImport: 0, note: "No imports yet." },
+  // Hosted pricing v2: three plans, per organization, with agent seats free.
   "/api/actions/billing.status": {
-    hosted: true, plan: "free", priceUsd: 15, interval: "month",
-    limits: { members: 3 }, usage: { members: 2, agents: 1, humans: 1 },
-    subscription: null, portalAvailable: false, configured: true,
+    hosted: true, plan: "free", planLabel: "Free", interval: null, priceUsd: 15,
+    features: ["surfaces"],
+    prices: { team: { month: 15, year: 150 }, business: { month: 49, year: 490 } },
+    seatPrices: { month: 2, year: 20 }, certInvoiceUsd: 1, aiMarkup: 1.2,
+    plans: [
+      { plan: "free", label: "Free", prices: null, limits: { humanSeats: 3, totalMembers: 3, includedHumanSeats: 3, billableSeats: false }, features: ["surfaces"], seatPrices: null, certInvoiceUsd: null },
+      { plan: "team", label: "Team", prices: { month: 15, year: 150 }, limits: { humanSeats: 10, totalMembers: 100, includedHumanSeats: 10, billableSeats: false }, features: ["surfaces", "integrations", "oauth_connectors", "webhooks", "importers", "certified_invoices", "ai"], seatPrices: null, certInvoiceUsd: 1 },
+      { plan: "business", label: "Business", prices: { month: 49, year: 490 }, limits: { humanSeats: null, totalMembers: 100, includedHumanSeats: 50, billableSeats: true }, features: ["surfaces", "integrations", "oauth_connectors", "webhooks", "importers", "certified_invoices", "ai", "security_policy", "audit_export", "stripe_tax", "priority_support", "ai_priority"], seatPrices: { month: 2, year: 20 }, certInvoiceUsd: null },
+    ],
+    limits: { humanSeats: 3, totalMembers: 3, includedHumanSeats: 3, billableSeats: false, members: 3 },
+    usage: { humans: 1, agents: 1, total: 2, members: 2, seatOverage: 0, seatCostUsd: 0 },
+    addons: { since: "2026-09-01T00:00:00.000Z", certifiedInvoices: 0, certifiedInvoicesUsd: 0, aiCents: 0, aiCostUsd: 0, aiCalls: 0 },
+    subscription: null, portalAvailable: false, configured: true, memberCap: 3, foundingCode: null,
   },
 };
 
@@ -67,7 +78,7 @@ const TABS = [
   { label: "Integrations", id: "integrations", load: () => import("../../client/src/features/org/IntegrationsTab"), why: /tells the rest of your tools what just happened/i, technical: /X-PTD-Signature/ },
   { label: "API", id: "api", load: () => import("../../client/src/features/org/ApiTab"), why: /Everything PTD can do is one list/i, technical: /openapi\.json/ },
   { label: "Import", id: "import", load: () => import("../../client/src/features/org/ImportTab"), why: /start from an empty board/i, technical: /externalKey/ },
-  { label: "Billing", id: "billing", load: () => import("../../client/src/features/org/BillingTab"), why: /One flat \$15 a month/i, technical: /billing\.status/ },
+  { label: "Billing", id: "billing", load: () => import("../../client/src/features/org/BillingTab"), why: /agent seats are free/i, technical: /billing\.status/ },
 ] as const;
 
 describe.each(TABS)("Org → $label explainer", ({ id, load, why, technical }) => {

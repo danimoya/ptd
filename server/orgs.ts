@@ -8,6 +8,7 @@ import { auth, createOrganization } from "./auth";
 import { validate } from "./validation";
 import { hasRole, isRole, type AuthenticatedRequest, type OrgRequest } from "./types";
 import { assertWithinPlan } from "./billing/limits";
+import { syncSeatQuantity } from "./billing/service";
 import { ActionError } from "./actions/registry";
 import { invitationUrl, sendInvitationEmail } from "./email/send";
 import { getOrgSecurity } from "./auth/security";
@@ -216,6 +217,10 @@ export function registerOrgRoutes(app: Express) {
         throw err;
       }
       await db.insert(memberships).values({ orgId: invite.orgId, userId: ar.user[0].id, role: invite.role, invitedBy: invite.invitedBy });
+      // A human seat past the 50 Business includes is billed, not refused, so the
+      // seat line item follows the roll. Never throws: an invitation must not fail
+      // because Stripe is slow, and the subscription webhook reconciles anyway.
+      await syncSeatQuantity(invite.orgId);
     }
     await db.update(invitations).set({ acceptedAt: new Date() }).where(eq(invitations.id, invite.id));
     audit({ orgId: invite.orgId, userId: ar.user[0].id, label: `${ar.user[0].displayName} <${ar.user[0].email}>` }, "member.joined", ar.user[0].email, { role: invite.role });
@@ -293,6 +298,8 @@ export function registerOrgRoutes(app: Express) {
     const deleted = await db.delete(memberships).where(and(eq(memberships.orgId, r.org.id), eq(memberships.userId, targetId))).returning({ id: memberships.id });
     if (deleted.length === 0) return res.status(404).json({ error: "Member not found" });
     audit(req, "member.removed", `user:${targetId}`, { self: targetId === r.user[0].id });
+    // The seat is free at once, and so is the $2 it was costing on Business.
+    await syncSeatQuantity(r.org.id);
     res.json({ removed: targetId });
   });
 }

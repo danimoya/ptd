@@ -10,6 +10,7 @@ import { z } from "zod";
 import { ActionError, defineAction, setActionAuditHook } from "./registry";
 import { allAuditEvents, audit, auditKinds, listAuditEvents, AUDIT_PAGE_LIMIT } from "../audit/log";
 import { toCsv } from "../export/csv";
+import { assertFeature } from "../billing/gate";
 
 /**
  * What the row's `target` should say. Actions name their subject with whichever
@@ -109,6 +110,10 @@ defineAction({
   surface: "org",
   audited: true,
   handler: async (args, ctx) => {
+    // Hosted: taking the audit log out as a document is part of Business. Reading it
+    // in the app (`audit.list`) stays open to every plan — a log you cannot read is
+    // not a log — and so does `org.export`, because your data is yours on any plan.
+    await assertFeature(ctx.orgId, "audit_export", "Exporting the audit log as CSV");
     const { from, to } = bounds(args);
     const rows = await allAuditEvents({ orgId: ctx.orgId, from, to, kind: args.kind });
     const csv = toCsv(

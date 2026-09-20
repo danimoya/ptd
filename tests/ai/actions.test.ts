@@ -115,7 +115,15 @@ describe("role gates", () => {
 
 describe("unconfigured", () => {
   it("answers ai.status honestly and refuses everything else with one message", async () => {
-    expect(await runAction("ai.status", {}, ctx("member"))).toEqual({ configured: false, provider: null, model: null });
+    // `ai.status` also reports whose key would answer; unconfigured, nobody's.
+    expect(await runAction("ai.status", {}, ctx("member"))).toMatchObject({
+      configured: false,
+      provider: null,
+      model: null,
+      source: null,
+      metered: false,
+      orgKey: { connected: false, keyHint: null },
+    });
 
     const expected = /AI provider not configured — set PTD_AI_PROVIDER and PTD_AI_API_KEY/;
     await expect(runAction("task.suggest_priority", { taskId: 7 }, ctx())).rejects.toThrow(expected);
@@ -141,11 +149,17 @@ describe("unconfigured", () => {
 describe("ai.status when configured", () => {
   it("names the provider and the model it would use, and nothing else", async () => {
     configure("anthropic");
-    expect(await runAction("ai.status", {}, ctx("member"))).toEqual({
+    expect(await runAction("ai.status", {}, ctx("member"))).toMatchObject({
       configured: true,
       provider: "anthropic",
       model: "claude-haiku-4-5",
+      // The deployment's own key, since this organization has connected none.
+      source: "env",
+      orgKey: { connected: false },
+      deployment: { configured: true, provider: "anthropic", model: "claude-haiku-4-5" },
     });
+    // Never the key itself, whatever else it says.
+    expect(JSON.stringify(await runAction("ai.status", {}, ctx("member")))).not.toContain("sk-ant");
     configure("openai");
     expect(await runAction("ai.status", {}, ctx("member"))).toMatchObject({ provider: "openai", model: "gpt-4o-mini" });
   });

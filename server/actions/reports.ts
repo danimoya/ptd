@@ -25,6 +25,11 @@
 
 import { z } from "zod";
 import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
+// Certified invoices are a paid add-on on the hosted instance: Free cannot issue
+// one, Team pays $1 through a meter, Business includes them. Self-hosting is
+// unaffected — both calls below return immediately when PTD_HOSTED is unset.
+import { assertCertifiedInvoices } from "../billing/gate";
+import { meterIssuedInvoice } from "../billing/metering";
 import { endOfWeek, startOfWeek, subDays } from "date-fns";
 import { db } from "../../db";
 import { customers, invoices, organizations, streams, timeEntries, users } from "../../db/schema";
@@ -357,6 +362,7 @@ defineAction({
   audited: true,
   surface: "track",
   handler: async (args, ctx) => {
+    const gate = await assertCertifiedInvoices(ctx.orgId);
     // Preview first: this both validates the customer is in the org and gives
     // the totals recorded on the row.
     const data = await buildInvoiceData({
@@ -409,9 +415,12 @@ defineAction({
       issuedAt,
     });
 
+    const billing = await meterIssuedInvoice(gate, { orgId: ctx.orgId, reference: issued.reference, at: issuedAt });
+
     return {
       invoiceId: row.id,
       kind: "customer",
+      billing,
       pdfUrl: issued.pdfUrl,
       reference: issued.reference,
       verifyUrl: issued.verifyUrl,

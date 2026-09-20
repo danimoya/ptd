@@ -9,8 +9,8 @@ vi.mock("../../db", async () => {
 import { checkoutParams, createCheckoutSession, createPortalSession, taxEnabled } from "../../server/billing/service";
 import { StripeClient, encodeForm } from "../../server/billing/stripe";
 
-const base = { orgId: 7, customerId: "cus_123", priceId: "price_abc" };
-const envBase = { PTD_PUBLIC_URL: "https://ptd.example.com" } as NodeJS.ProcessEnv;
+const base = { orgId: 7, customerId: "cus_123", plan: "team" as const, interval: "month" as const };
+const envBase = { PTD_PUBLIC_URL: "https://ptd.example.com", STRIPE_PRICE_TEAM_MONTHLY: "price_abc" } as unknown as NodeJS.ProcessEnv;
 const withTax = { ...envBase, STRIPE_TAX_ENABLED: "1" } as NodeJS.ProcessEnv;
 
 /** A Stripe client that records the request instead of making it. */
@@ -51,6 +51,7 @@ describe("checkout body without Stripe Tax", () => {
     expect(params.mode).toBe("subscription");
     expect(params.customer).toBe("cus_123");
     expect(params.client_reference_id).toBe("7");
+    // No metered prices configured in this env, so the flat price is the whole session.
     expect(params.line_items).toEqual([{ price: "price_abc", quantity: 1 }]);
     expect(params.allow_promotion_codes).toBe(true);
     expect(String(params.success_url)).toContain("session_id={CHECKOUT_SESSION_ID}");

@@ -7,13 +7,15 @@
  * compare in constant time.
  */
 import { createHmac, timingSafeEqual } from "crypto";
+import { isPaidPlan, type PaidPlan } from "./plans";
 import {
   applySubscriptionState,
   fetchSubscription,
   findOrgIdByStripe,
   idOf,
-  planForStatus,
   requireStripe,
+  subscriptionHealth,
+  syncSeatQuantity,
   type AppliedState,
   type StripeCheckoutSession,
   type StripeSubscription,
@@ -155,7 +157,22 @@ export interface HandleResult {
   duplicate?: boolean;
   orgId?: number;
   plan?: string;
+  interval?: string | null;
+  /** Present when the event moved the Business seat quantity. */
+  seats?: { quantity: number; previous: number | null; synced: boolean; note?: string };
   note?: string;
+}
+
+/**
+ * The plan a Checkout Session says it bought.
+ *
+ * Only ever a fallback: the subscription's own price is what decides the plan
+ * (`subscriptionShape`), and this metadata is written by PTD itself — so it is
+ * trusted exactly as far as "Stripe is unreachable and the customer has paid".
+ */
+function planFromMetadata(obj: { metadata?: Record<string, string> } | undefined): PaidPlan | null {
+  const raw = obj?.metadata?.plan;
+  return isPaidPlan(raw) ? raw : null;
 }
 
 function orgIdFromMetadata(obj: { metadata?: Record<string, string> } | undefined): number | null {
@@ -218,10 +235,14 @@ export async function handleStripeEvent(
           // Stripe unreachable: the session completing is itself proof enough to
           // unlock the org; the next subscription event reconciles the details.
           console.warn(`[billing] subscription read failed for ${subscriptionId}: ${err instanceof Error ? err.message : err}`);
-          applied = await applySubscriptionState(orgId, { id: subscriptionId, status: "active", customer: customerId }, { forcePlan: "hosted" });
+          applied = await applySubscriptionState(
+            orgId,
+            { id: subscriptionId, status: "active", customer: customerId },
+            { forcePlan: planFromMetadata(session) ?? "team" },
+          );
         }
         markProcessed(event.id);
-        return { ...base, handled: true, orgId, plan: applied.plan };
+        return { ...base, handled: true, orgId, plan: applied.plan, interval: applied.interval };
       }
 
       case "customer.subscription.created":
@@ -237,12 +258,23 @@ export async function handleStripeEvent(
         if (!orgId) return { ...base, note: "no organization matched the subscription" };
 
         const deleted = event.type === "customer.subscription.deleted";
-        const applied = await applySubscriptionState(orgId, sub, deleted ? { forcePlan: "free" } : {});
-        if (!deleted && planForStatus(sub.status).pastDue) {
+        const applied = await applySubscriptionState(orgId, sub, deleted ? { forcePlan: "free" } : { env });
+        if (!deleted && subscriptionHealth(sub.status).pastDue) {
           console.warn(`[billing] org ${orgId} subscription ${sub.id} is past_due — access kept while Stripe retries`);
         }
+
+        // An `updated` event is also how a plan change lands, so this is where the
+        // seat quantity is reconciled against the roll. It is a no-op when the
+        // quantity already matches — which is what keeps our own seat update from
+        // bouncing back through this branch for ever.
+        let seats: HandleResult["seats"];
+        if (event.type === "customer.subscription.updated" && applied.plan === "business") {
+          const result = await syncSeatQuantity(orgId, { env, client: deps.client });
+          seats = { quantity: result.quantity, previous: result.previous, synced: result.synced, ...(result.note ? { note: result.note } : {}) };
+        }
+
         markProcessed(event.id);
-        return { ...base, handled: true, orgId, plan: applied.plan };
+        return { ...base, handled: true, orgId, plan: applied.plan, interval: applied.interval, ...(seats ? { seats } : {}) };
       }
 
       case "invoice.payment_failed": {

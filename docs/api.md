@@ -163,14 +163,14 @@ JSON object.
 
 <!-- BEGIN GENERATED ACTIONS -->
 
-_152 actions, generated from the registry by `scripts/gen-docs.ts` (`npm run docs`). Do not edit this block by hand._
+_155 actions, generated from the registry by `scripts/gen-docs.ts` (`npm run docs`). Do not edit this block by hand._
 
 | surface | actions | minimum role of each |
 |---|---|---|
 | overview | 18 | 7 × `member`, 10 × `manager`, 1 × `admin` |
 | plan | 37 | 15 × `member`, 22 × `manager` |
 | track | 37 | 25 × `member`, 11 × `manager`, 1 × `admin` |
-| org | 60 | 20 × `member`, 5 × `manager`, 30 × `admin`, 5 × `owner` |
+| org | 63 | 20 × `member`, 5 × `manager`, 32 × `admin`, 6 × `owner` |
 
 ### Overview — backlog, apps, KPIs, webhooks
 
@@ -180,7 +180,7 @@ _152 actions, generated from the registry by `scripts/gen-docs.ts` (`npm run doc
 
 **AI status** · role `member` and above
 
-Whether this deployment has an AI provider configured, and which model it would use. The only AI action that works unconfigured — everything else refuses until PTD_AI_PROVIDER and PTD_AI_API_KEY are set. Never returns the key.
+Whether AI is available to this organization and whose key would answer: its own (connected with ai.connect, billed by the provider) or this deployment's (billed on at cost plus 20% on Team and Business). Never returns a key — only the provider, the model and the last four characters. The only AI action that works unconfigured.
 
 Takes no arguments.
 
@@ -188,7 +188,7 @@ Takes no arguments.
 
 **AI usage** · role `admin` and above
 
-Tokens and estimated dollars this organization has spent on AI suggestions, from the ai_usage ledger: one row per provider call, so the numbers survive a restart and are the same on every app replica. Totals for the window (30 days by default, up to 365) with breakdowns by day, by member, by model and by action. Costs are estimates from a static price table. `thisProcess` is the last 500 calls this server process happened to make — the same ledger seen through a keyhole, useful right after a batch run.
+Tokens and estimated dollars this organization has spent on AI suggestions, from the ai_usage ledger: one row per provider call, so the numbers survive a restart and are the same on every app replica. Totals for the window (30 days by default, up to 365) with breakdowns by day, by member, by model and by action. Costs are estimates from a static price table; `meterCents` is what those calls would be billed on for at cost plus 20% when PTD's key answered them. `thisProcess` is the last 500 calls this server process happened to make — the same ledger seen through a keyhole, useful right after a batch run.
 
 | field | type | | meaning |
 |---|---|---|---|
@@ -1286,13 +1286,34 @@ What PTD thinks a set of token counts costs, using the same table `time_entry.at
 
 ### Org — members, imports, calendar, integrations, billing
 
-`account.security` · `audit.export` · `audit.list` · `billing.checkout` · `billing.contractors` · `billing.portal` · `billing.status` · `billing.sync` · `github.disconnect` · `github.list_mappings` · `github.map_stream` · `github.status` · `github.sync_now` · `github.unmap_stream` · `ical.url` · `identity.list` · `identity.unlink` · `import.commit` · `import.history` · `import.preview` · `invitation.resend` · `member.billing` · `member.set_billing` · `oauth.clients` · `oauth.my_grants` · `oauth.revoke_client` · `oauth.revoke_grant` · `org.delete` · `org.export` · `org.members` · `org.security` · `org.set_security` · `slack.check_budgets` · `slack.disconnect` · `slack.link_code` · `slack.set_channel` · `slack.status` · `slack.test` · `slack.unlink` · `teams.connect` · `teams.disconnect` · `teams.link_code` · `teams.status` · `teams.unlink` · `telegram.disconnect` · `telegram.link_code` · `telegram.register_webhook` · `telegram.status` · `telegram.unlink` · `telegram.webhook_info` · `usage.connect_provider` · `usage.disconnect_provider` · `usage.providers` · `usage.reconcile` · `usage.reconciliations` · `webhook.create` · `webhook.delete` · `webhook.list` · `webhook.test` · `whoami`
+`account.security` · `ai.connect` · `ai.disconnect` · `audit.export` · `audit.list` · `billing.change_plan` · `billing.checkout` · `billing.contractors` · `billing.portal` · `billing.status` · `billing.sync` · `github.disconnect` · `github.list_mappings` · `github.map_stream` · `github.status` · `github.sync_now` · `github.unmap_stream` · `ical.url` · `identity.list` · `identity.unlink` · `import.commit` · `import.history` · `import.preview` · `invitation.resend` · `member.billing` · `member.set_billing` · `oauth.clients` · `oauth.my_grants` · `oauth.revoke_client` · `oauth.revoke_grant` · `org.delete` · `org.export` · `org.members` · `org.security` · `org.set_security` · `slack.check_budgets` · `slack.disconnect` · `slack.link_code` · `slack.set_channel` · `slack.status` · `slack.test` · `slack.unlink` · `teams.connect` · `teams.disconnect` · `teams.link_code` · `teams.status` · `teams.unlink` · `telegram.disconnect` · `telegram.link_code` · `telegram.register_webhook` · `telegram.status` · `telegram.unlink` · `telegram.webhook_info` · `usage.connect_provider` · `usage.disconnect_provider` · `usage.providers` · `usage.reconcile` · `usage.reconciliations` · `webhook.create` · `webhook.delete` · `webhook.list` · `webhook.test` · `whoami`
 
 #### `account.security`
 
 **My second-factor state** · role `member` and above
 
 Whether two-factor authentication is on for your account, how many recovery codes are left, which providers are linked, and whether this organization requires 2FA. What the Org → Security tab reads.
+
+Takes no arguments.
+
+#### `ai.connect`
+
+**Connect an AI provider key** · role `admin` and above
+
+Store this organization's own Anthropic or OpenAI key, sealed with AES-256-GCM, and use it for every AI call instead of the deployment's. The provider bills you directly and PTD meters nothing. The key is never returned by any action — `ai.status` shows the provider, the model and the last four characters. Connecting again replaces the stored key. Admin only, and recorded in the audit log.
+
+| field | type | | meaning |
+|---|---|---|---|
+| `provider` | `anthropic` \| `openai` | required | Which provider the key belongs to. |
+| `apiKey` | string | required | The provider API key. Stored sealed; never echoed back. |
+| `model` | string | optional | Override the provider's default model for this organization. |
+| `baseUrl` | string | optional | Point at a gateway or proxy instead of the provider's own host. |
+
+#### `ai.disconnect`
+
+**Disconnect the AI provider key** · role `admin` and above
+
+Forget this organization's stored provider key. AI then falls back to the deployment's own key where one is configured — on the hosted instance that means Team and Business calls start being metered at cost plus 20% again. Admin only, and recorded in the audit log.
 
 Takes no arguments.
 
@@ -1322,13 +1343,27 @@ Who did what in this organization, newest first: sign-ins and failed sign-ins, 2
 | `limit` | integer | optional | Rows to return (default 50, max 200). |
 | `offset` | integer | optional |  |
 
+#### `billing.change_plan`
+
+**Change plan** · role `owner` and above
+
+Move an existing subscription to another plan or billing interval in place — Team↔Business, monthly↔annual — rather than starting a second Checkout. Stripe prorates the difference onto the next invoice (`create_prorations`), the subscription keeps its identity and any discount, and the seat quantity is set from the current human count. An organization with no subscription yet is sent to billing.checkout instead. Owner only.
+
+| field | type | | meaning |
+|---|---|---|---|
+| `plan` | `team` \| `business` | required | Which plan to buy: team ($15/org/month) or business ($49/org/month). |
+| `interval` | `month` \| `year` | optional | month, or year for two months free (Team $150, Business $490). Defaults to month. |
+
 #### `billing.checkout`
 
 **Start checkout** · role `owner` and above
 
-Create a Stripe Checkout Session for the flat $15/month organization subscription and return its URL for the browser to follow. Owner only.
+Create a Stripe Checkout Session for a plan and interval and return its URL for the browser to follow. The session carries the flat plan price, the seat price when Business is already past 50 humans, and both usage meters; promotion codes (FOUNDING) are accepted there. Owner only.
 
-Takes no arguments.
+| field | type | | meaning |
+|---|---|---|---|
+| `plan` | `team` \| `business` | required | Which plan to buy: team ($15/org/month) or business ($49/org/month). |
+| `interval` | `month` \| `year` | optional | month, or year for two months free (Team $150, Business $490). Defaults to month. |
 
 #### `billing.contractors`
 
@@ -1353,7 +1388,7 @@ Takes no arguments.
 
 **Billing status** · role `admin` and above
 
-The organization's hosted plan, what it costs, seat usage against the free-tier limit and the live subscription state. On a self-hosted deployment it answers { hosted: false } and nothing else — there is no billing to report.
+Everything the Billing tab draws: the plan and interval, the price list, the seat limits and what is in use (humans, agents, total, billable overage), the metered add-ons so far this period (certified invoices, AI cents), the live subscription state, and the founding-member code while one is on offer. On a self-hosted deployment it answers { hosted: false } and nothing else — there is no billing to report.
 
 Takes no arguments.
 
@@ -1361,7 +1396,7 @@ Takes no arguments.
 
 **Sync subscription** · role `owner` and above
 
-Re-read the subscription from Stripe and apply it to the organization. The Checkout success redirect calls this so the plan is correct even before the webhook lands; safe to call at any time. Owner only.
+Re-read the subscription from Stripe and apply it to the organization — plan from the base price, interval, item ids and the period. The Checkout success redirect calls this so the plan is correct even before the webhook lands; safe to call at any time. Owner only.
 
 | field | type | | meaning |
 |---|---|---|---|

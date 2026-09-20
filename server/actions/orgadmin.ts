@@ -17,6 +17,8 @@ import { getOrgSecurity, setOrgSecurity } from "../auth/security";
 import { reloadUser } from "../auth/mfa";
 import { currentBaseUrl } from "../billing/base";
 import { getOrgBilling, isHosted } from "../billing/service";
+import { assertFeature } from "../billing/gate";
+import { isPaidPlan } from "../billing/plans";
 import { deleteOrganization, exportFilename, mintExportToken, EXPORT_TOKEN_TTL_MS } from "../export/orgExport";
 
 defineAction({
@@ -44,6 +46,9 @@ defineAction({
   surface: "org",
   audited: true,
   handler: async (args, ctx) => {
+    // Hosted: an organization-wide security policy is part of Business. Self-hosted
+    // deployments have it unconditionally — it is their own network.
+    await assertFeature(ctx.orgId, "security_policy", "An organization-wide two-factor requirement");
     const current = await getOrgSecurity(ctx.orgId);
     if (args.requireTotp && !current.requireTotp) {
       const me = await reloadUser(ctx.userId);
@@ -108,7 +113,7 @@ defineAction({
 
     if (isHosted()) {
       const billing = await getOrgBilling(ctx.orgId);
-      if (billing && (billing.plan === "hosted" || billing.stripeSubscriptionId)) {
+      if (billing && (isPaidPlan(billing.plan) || billing.stripeSubscriptionId)) {
         throw new ActionError(
           "conflict",
           "This organization has a live hosted subscription. Cancel it first (Org → Billing → Manage billing), then delete — otherwise Stripe would keep billing a customer with nothing to use.",

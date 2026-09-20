@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 import { fakeDb } from "./fake-db";
-import { eventFixture, signPayload, stripeStub, subscriptionFixture } from "./stub";
+import { eventFixture, planSubscriptionFixture, signPayload, stripeStub, subscriptionFixture } from "./stub";
 
 vi.mock("../../db", () => ({ db: fakeDb }));
 
@@ -38,7 +38,7 @@ beforeEach(() => {
   process.env.STRIPE_WEBHOOK_SECRET = SECRET;
   process.env.STRIPE_SECRET_KEY = "sk_test_stub";
   process.env.STRIPE_API_BASE = "https://api.stripe.test";
-  const stub = stripeStub({ subscriptions: { sub_hook: subscriptionFixture({ id: "sub_hook", customer: "cus_hook" }) } });
+  const stub = stripeStub({ subscriptions: { sub_hook: planSubscriptionFixture("team", "month", { id: "sub_hook", customer: "cus_hook" }) } });
   vi.stubGlobal("fetch", vi.fn(stub.fetchImpl as never));
 });
 
@@ -54,7 +54,7 @@ function post(app: express.Express, payload: string, signature?: string) {
 }
 
 describe("POST /api/billing/webhook", () => {
-  it("verifies a signed checkout.session.completed against the raw bytes and flips the org to hosted", async () => {
+  it("verifies a signed checkout.session.completed against the raw bytes and puts the org on its plan", async () => {
     const payload = JSON.stringify(eventFixture("checkout.session.completed", {
       id: "cs_route", client_reference_id: String(ORG_ID), customer: "cus_hook", subscription: "sub_hook",
     }, "evt_route_1"));
@@ -62,12 +62,12 @@ describe("POST /api/billing/webhook", () => {
     const res = await post(buildApp(), payload, signPayload(payload, SECRET));
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ received: true, handled: true, orgId: ORG_ID, plan: "hosted" });
-    expect(fakeDb.org(ORG_ID)).toMatchObject({ plan: "hosted", stripeSubscriptionId: "sub_hook" });
+    expect(res.body).toMatchObject({ received: true, handled: true, orgId: ORG_ID, plan: "team" });
+    expect(fakeDb.org(ORG_ID)).toMatchObject({ plan: "team", stripeSubscriptionId: "sub_hook" });
   });
 
   it("flips the org back to free on customer.subscription.deleted", async () => {
-    fakeDb.reset().setOrg({ id: ORG_ID, plan: "hosted", stripeCustomerId: "cus_hook", stripeSubscriptionId: "sub_hook" });
+    fakeDb.reset().setOrg({ id: ORG_ID, plan: "team", stripeCustomerId: "cus_hook", stripeSubscriptionId: "sub_hook" });
     const payload = JSON.stringify(eventFixture("customer.subscription.deleted", subscriptionFixture({ id: "sub_hook", status: "canceled", customer: "cus_hook" }), "evt_route_2"));
 
     const res = await post(buildApp(), payload, signPayload(payload, SECRET));

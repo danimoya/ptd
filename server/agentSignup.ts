@@ -10,6 +10,7 @@ import { mintToken } from "./tokens";
 import { authLimiter } from "./rate-limit";
 import { buildManifest } from "./discovery";
 import { assertWithinPlan } from "./billing/limits";
+import { syncSeatQuantity } from "./billing/service";
 import { ActionError } from "./actions/registry";
 import { audit } from "./audit/log";
 
@@ -62,6 +63,10 @@ export function registerAgentSignup(app: Express) {
 
     if (inviteCode) {
       await db.insert(memberships).values({ orgId, userId: user.id, role });
+      // An agent seat is free on Team and Business, so this never moves the seat
+      // quantity — it is here so that *every* path that adds a member reconciles,
+      // and a future change to what agents cost cannot quietly skip one.
+      await syncSeatQuantity(orgId);
     } else {
       const org = await createOrganization(orgLabel, user.id);
       orgId = org.id;

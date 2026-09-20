@@ -37,6 +37,8 @@ import { monthLabel, monthWindow } from "../track/invoice";
 import { billingProfile, billingProfiles } from "../invoices/entries";
 import { buildContractorInvoice, contractorReference, contractorSnapshot } from "../invoices/contractor";
 import { certify, verifyUrlFor, voidInvoice } from "../invoices/issue";
+import { assertCertifiedInvoices } from "../billing/gate";
+import { meterIssuedInvoice } from "../billing/metering";
 import { parseWhen } from "../track/entries";
 
 /* ── Shared input pieces ─────────────────────────────────────────────── */
@@ -374,6 +376,10 @@ defineAction({
   surface: "track",
   audited: true,
   handler: async (args, ctx) => {
+    // Before anything is frozen: is a certified invoice part of this plan, and can
+    // the dollar it costs on Team actually be billed? Finding that out after the
+    // document is signed and its entries are locked would be far too late.
+    const gate = await assertCertifiedInvoices(ctx.orgId);
     const name = await orgName(ctx.orgId);
     const draft = await buildContractorInvoice({
       orgId: ctx.orgId,
@@ -438,9 +444,14 @@ defineAction({
       issuedAt,
     });
 
+    // One `ptd_certified_invoices` meter event on Team, keyed on the reference so a
+    // retry cannot bill it twice. Business includes them; self-hosting meters nothing.
+    const billing = await meterIssuedInvoice(gate, { orgId: ctx.orgId, reference: issued.reference, at: issuedAt });
+
     return {
       invoiceId: row.id,
       kind: "contractor",
+      billing,
       reference: issued.reference,
       verifyUrl: issued.verifyUrl,
       verifyToken: issued.verifyToken,

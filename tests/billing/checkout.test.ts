@@ -1,17 +1,32 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeDb } from "./fake-db";
-import { parseForm, stripeStub, subscriptionFixture } from "./stub";
+import { parseForm, planSubscriptionFixture, stripeStub, subscriptionFixture } from "./stub";
 
 vi.mock("../../db", () => ({ db: fakeDb }));
 
 const { STRIPE_API_VERSION, StripeClient, StripeError, encodeForm, redactKey } = await import("../../server/billing/stripe");
 const {
-  checkoutParams, createCheckoutSession, createPortalSession, ensureCustomer, ownerEmail,
-  orgSeatUsage, syncOrgFromStripe, requireStripe, priceId,
+  checkoutParams, checkoutLineItems, changePlanParams, createCheckoutSession, createPortalSession, ensureCustomer, ownerEmail,
+  orgSeatUsage, syncOrgFromStripe, requireStripe, requirePlanPriceId,
 } = await import("../../server/billing/service");
 
 const ORG_ID = 4;
-const ENV = { PTD_HOSTED: "1", STRIPE_PRICE_ID: "price_test_15", PTD_PUBLIC_URL: "https://ptd.danimoya.com" } as unknown as NodeJS.ProcessEnv;
+/**
+ * The eight live prices, as the hosted deployment configures them. `STRIPE_PRICE_ID`
+ * is deliberately absent here — its own test below proves the fallback.
+ */
+const ENV = {
+  PTD_HOSTED: "1",
+  PTD_PUBLIC_URL: "https://ptd.danimoya.com",
+  STRIPE_PRICE_TEAM_MONTHLY: "price_team_m",
+  STRIPE_PRICE_TEAM_YEARLY: "price_team_y",
+  STRIPE_PRICE_BUSINESS_MONTHLY: "price_bus_m",
+  STRIPE_PRICE_BUSINESS_YEARLY: "price_bus_y",
+  STRIPE_PRICE_SEAT_MONTHLY: "price_seat_m",
+  STRIPE_PRICE_SEAT_YEARLY: "price_seat_y",
+  STRIPE_PRICE_CERT_INVOICE: "price_cert",
+  STRIPE_PRICE_AI_USAGE: "price_ai",
+} as unknown as NodeJS.ProcessEnv;
 
 function client(stub: ReturnType<typeof stripeStub>) {
   return new StripeClient({ secretKey: "sk_test_abcdefgh1234", apiBase: "https://api.stripe.test", fetchImpl: stub.fetchImpl });
@@ -46,19 +61,69 @@ describe("encodeForm", () => {
   });
 });
 
-describe("checkoutParams", () => {
-  const params = () => checkoutParams({ orgId: ORG_ID, customerId: "cus_1", priceId: "price_test_15", env: ENV });
+describe("checkoutLineItems", () => {
+  const items = (over: Record<string, unknown> = {}) =>
+    checkoutLineItems({ orgId: ORG_ID, customerId: "cus_1", plan: "team", interval: "month", env: ENV, ...over } as never);
 
-  it("is a flat one-quantity subscription against the configured price", () => {
+  it("sells Team monthly as the flat price plus the two meters", () => {
+    expect(items()).toEqual([
+      { price: "price_team_m", quantity: 1 },
+      // No quantity on a metered price: usage arrives as meter events.
+      { price: "price_cert" },
+      { price: "price_ai" },
+    ]);
+  });
+
+  it("sells the yearly prices — two months free — off the same call", () => {
+    expect(items({ interval: "year" })[0]).toEqual({ price: "price_team_y", quantity: 1 });
+    expect(items({ plan: "business", interval: "year" })[0]).toEqual({ price: "price_bus_y", quantity: 1 });
+  });
+
+  it("adds the seat price on Business, with the overage as its quantity", () => {
+    expect(items({ plan: "business", seatQuantity: 12 })).toEqual([
+      { price: "price_bus_m", quantity: 1 },
+      { price: "price_seat_m", quantity: 12 },
+      { price: "price_cert" },
+      { price: "price_ai" },
+    ]);
+    expect(items({ plan: "business", interval: "year", seatQuantity: 4 })[1]).toEqual({ price: "price_seat_y", quantity: 4 });
+  });
+
+  it("leaves the seat line out when there is no overage — Stripe will not take a zero", () => {
+    expect(items({ plan: "business", seatQuantity: 0 }).map((i) => i.price)).toEqual(["price_bus_m", "price_cert", "price_ai"]);
+    // And never on Team, whose ten seats are a limit rather than a meter.
+    expect(items({ plan: "team", seatQuantity: 99 }).map((i) => i.price)).toEqual(["price_team_m", "price_cert", "price_ai"]);
+  });
+
+  it("refuses to build a session for a plan this deployment has no price for", () => {
+    expect(() => checkoutLineItems({ orgId: ORG_ID, customerId: "cus_1", plan: "business", interval: "month", env: {} as NodeJS.ProcessEnv })).toThrow(
+      /STRIPE_PRICE_BUSINESS_MONTHLY/,
+    );
+  });
+
+  it("still honours STRIPE_PRICE_ID as Team monthly, for a deployment from pricing v1", () => {
+    const legacy = { STRIPE_PRICE_ID: "price_test_15" } as unknown as NodeJS.ProcessEnv;
+    expect(checkoutLineItems({ orgId: ORG_ID, customerId: "cus_1", plan: "team", interval: "month", env: legacy })).toEqual([
+      { price: "price_test_15", quantity: 1 },
+    ]);
+  });
+});
+
+describe("checkoutParams", () => {
+  const params = (over: Record<string, unknown> = {}) =>
+    checkoutParams({ orgId: ORG_ID, customerId: "cus_1", plan: "team", interval: "month", env: ENV, ...over } as never);
+
+  it("is a subscription session for one organization, with promotion codes open", () => {
     expect(params()).toMatchObject({
       mode: "subscription",
       customer: "cus_1",
       client_reference_id: "4",
-      line_items: [{ price: "price_test_15", quantity: 1 }],
+      line_items: [{ price: "price_team_m", quantity: 1 }, { price: "price_cert" }, { price: "price_ai" }],
+      // FOUNDING is a promotion code on the coupon, redeemed here rather than applied by PTD.
       allow_promotion_codes: true,
       automatic_tax: { enabled: false },
-      subscription_data: { metadata: { orgId: "4", product: "ptd-hosted" } },
-      metadata: { orgId: "4" },
+      subscription_data: { metadata: { orgId: "4", product: "ptd-hosted", plan: "team", interval: "month" } },
+      metadata: { orgId: "4", plan: "team", interval: "month" },
     });
   });
 
@@ -68,7 +133,7 @@ describe("checkoutParams", () => {
 
   it("keeps Stripe's {CHECKOUT_SESSION_ID} template literal in success_url", () => {
     const p = params();
-    expect(p.success_url).toBe("https://ptd.danimoya.com/org/billing?tab=billing&checkout=success&session_id={CHECKOUT_SESSION_ID}");
+    expect(p.success_url).toBe("https://ptd.danimoya.com/org/billing?tab=billing&checkout=success&plan=team&session_id={CHECKOUT_SESSION_ID}");
     expect(p.cancel_url).toBe("https://ptd.danimoya.com/org/billing?tab=billing&checkout=cancelled");
   });
 
@@ -80,7 +145,7 @@ describe("checkoutParams", () => {
 describe("createCheckoutSession", () => {
   it("POSTs the session to Stripe with the pinned version and bearer auth, and returns the URL", async () => {
     const stub = stripeStub();
-    const res = await createCheckoutSession(client(stub), { orgId: ORG_ID, customerId: "cus_1", priceId: "price_test_15", env: ENV });
+    const res = await createCheckoutSession(client(stub), { orgId: ORG_ID, customerId: "cus_1", plan: "team", interval: "month", env: ENV });
 
     expect(res).toEqual({ id: "cs_test_stub", url: "https://checkout.stripe.com/c/pay/cs_test_stub" });
     const call = stub.callsTo("/v1/checkout/sessions")[0];
@@ -92,8 +157,10 @@ describe("createCheckoutSession", () => {
       mode: "subscription",
       customer: "cus_1",
       client_reference_id: "4",
-      "line_items[0][price]": "price_test_15",
+      "line_items[0][price]": "price_team_m",
       "line_items[0][quantity]": "1",
+      "line_items[1][price]": "price_cert",
+      "line_items[2][price]": "price_ai",
       allow_promotion_codes: "true",
       "automatic_tax[enabled]": "false",
       "subscription_data[metadata][orgId]": "4",
@@ -106,7 +173,64 @@ describe("createCheckoutSession", () => {
       secretKey: "sk_test_x",
       fetchImpl: async () => ({ ok: false, status: 400, text: async () => JSON.stringify({ error: { message: "No such price", code: "resource_missing" } }) }) as never,
     });
-    await expect(createCheckoutSession(failing, { orgId: ORG_ID, customerId: "cus_1", priceId: "price_bad", env: ENV })).rejects.toThrow(/No such price/);
+    await expect(createCheckoutSession(failing, { orgId: ORG_ID, customerId: "cus_1", plan: "team", interval: "month", env: ENV })).rejects.toThrow(
+      /No such price/,
+    );
+  });
+
+  it("sends a Business/month session with the seat overage on the wire", async () => {
+    const stub = stripeStub();
+    await createCheckoutSession(client(stub), { orgId: ORG_ID, customerId: "cus_1", plan: "business", interval: "month", seatQuantity: 7, env: ENV });
+    expect(stub.callsTo("/v1/checkout/sessions")[0].body).toMatchObject({
+      "line_items[0][price]": "price_bus_m",
+      "line_items[0][quantity]": "1",
+      "line_items[1][price]": "price_seat_m",
+      "line_items[1][quantity]": "7",
+      "line_items[2][price]": "price_cert",
+      "line_items[3][price]": "price_ai",
+      "metadata[plan]": "business",
+      "metadata[interval]": "month",
+    });
+    expect(Object.keys(stub.callsTo("/v1/checkout/sessions")[0].body)).not.toContain("line_items[2][quantity]");
+  });
+});
+
+describe("changePlanParams", () => {
+  it("replaces the base item in place and prorates, rather than starting a second subscription", () => {
+    const params = changePlanParams({
+      plan: "business",
+      interval: "month",
+      items: { base: "si_base", cert: "si_cert", ai: "si_ai" },
+      seatQuantity: 3,
+      env: ENV,
+    });
+    expect(params.proration_behavior).toBe("create_prorations");
+    expect(params.items).toEqual([
+      { id: "si_base", price: "price_bus_m", quantity: 1 },
+      { price: "price_seat_m", quantity: 3 },
+      { id: "si_cert", price: "price_cert" },
+      { id: "si_ai", price: "price_ai" },
+    ]);
+  });
+
+  it("deletes the seat item on the way down to Team — nothing else stops it billing", () => {
+    const params = changePlanParams({ plan: "team", interval: "year", items: { base: "si_base", seat: "si_seat" }, env: ENV });
+    expect(params.items).toEqual([
+      { id: "si_base", price: "price_team_y", quantity: 1 },
+      { id: "si_seat", deleted: true },
+      { price: "price_cert" },
+      { price: "price_ai" },
+    ]);
+  });
+
+  it("moves the meters to the new interval too", () => {
+    const params = changePlanParams({ plan: "business", interval: "year", items: { base: "si_base", seat: "si_seat" }, seatQuantity: 5, env: ENV });
+    expect(params.items).toEqual([
+      { id: "si_base", price: "price_bus_y", quantity: 1 },
+      { id: "si_seat", price: "price_seat_y", quantity: 5 },
+      { price: "price_cert" },
+      { price: "price_ai" },
+    ]);
   });
 });
 
@@ -163,8 +287,8 @@ describe("syncOrgFromStripe", () => {
 
     const applied = await syncOrgFromStripe(client(stub), ORG_ID, { sessionId: "cs_done" });
 
-    expect(applied).toMatchObject({ plan: "hosted", status: "active", cancelAtPeriodEnd: false });
-    expect(fakeDb.org(ORG_ID)).toMatchObject({ plan: "hosted", stripeSubscriptionId: "sub_sync", stripeCustomerId: "cus_sync" });
+    expect(applied).toMatchObject({ plan: "team", status: "active", cancelAtPeriodEnd: false });
+    expect(fakeDb.org(ORG_ID)).toMatchObject({ plan: "team", stripeSubscriptionId: "sub_sync", stripeCustomerId: "cus_sync" });
   });
 
   it("ignores a session that belongs to another organization", async () => {
@@ -183,7 +307,7 @@ describe("syncOrgFromStripe", () => {
 
     const applied = await syncOrgFromStripe(client(stub), ORG_ID);
 
-    expect(applied).toMatchObject({ plan: "hosted" });
+    expect(applied).toMatchObject({ plan: "team" });
     expect(stub.callsTo("/v1/subscriptions")[0].body).toMatchObject({ customer: "cus_list", status: "all", limit: "10" });
   });
 
@@ -218,8 +342,8 @@ describe("org helpers", () => {
 describe("configuration", () => {
   it("refuses to build a client or read a price without the env", () => {
     expect(() => requireStripe({} as NodeJS.ProcessEnv)).toThrow(/STRIPE_SECRET_KEY/);
-    expect(() => priceId({} as NodeJS.ProcessEnv)).toThrow(/STRIPE_PRICE_ID/);
-    expect(() => priceId(ENV)).not.toThrow();
+    expect(() => requirePlanPriceId("team", "month", {} as NodeJS.ProcessEnv)).toThrow(/STRIPE_PRICE_TEAM_MONTHLY/);
+    expect(requirePlanPriceId("business", "year", ENV)).toBe("price_bus_y");
   });
 
   it("redacts keys for logs", () => {
