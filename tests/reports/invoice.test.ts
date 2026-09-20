@@ -13,10 +13,13 @@ import {
   monthLabel,
   monthWindow,
   money,
+  renderContractorInvoicePdf,
   renderInvoicePdf,
+  customerDataFromSnapshot,
   thousands,
   type InvoiceData,
 } from "../../server/track/invoice";
+import { foldContractorLines } from "../../server/invoices/contractor";
 import type { ReportRow } from "../../server/track/reports";
 
 let nextId = 1;
@@ -117,6 +120,8 @@ describe("foldInvoiceLines", () => {
       hours: 0,
       tokens: 0,
       costUsd: 0,
+      // No line carried a rate, so the document states hours and no money.
+      amountCents: null,
     });
   });
 });
@@ -262,7 +267,7 @@ describe("renderInvoicePdf", () => {
 
   it("says why there is no money column for the hours", async () => {
     const text = await pdfText(await renderInvoicePdf(data()));
-    expect(text).toContain("No hourly rate is recorded in this ledger");
+    expect(text).toContain("No hourly rate is recorded for this customer or its streams");
   });
 
   it("closes with an italic colophon naming the organization", async () => {
@@ -290,5 +295,211 @@ describe("renderInvoicePdf", () => {
   it("carries a customer with no billing details at all", async () => {
     const pdf = await renderInvoicePdf(data({ customer: { id: 2, name: "Verso Press", billingAddress: null, billingEmail: null } }));
     expect(await pdfText(pdf)).toContain("Verso Press");
+  });
+});
+
+/* ── Certification, and the contractor layout ───────────────────────────── */
+
+const CERT = {
+  reference: "PTD-CTR-2026-09-0001",
+  contentHash: "752a0434bbb6560f88c56c653563daead28d18f21820418e6da978a1d5728803",
+  keyId: 1,
+  algorithm: "ed25519",
+  verifyUrl: "https://ptd.example.com/verify/f58bcb303d70aa83a9aa6e362c68752cb92d367a2940c63c7aacc0144817f8cf",
+  issuedAt: "2026-09-20T12:00:00.000Z",
+  voided: false,
+};
+
+const snapshotLines = [
+  {
+    entryId: 14,
+    checkIn: new Date(2026, 8, 15, 9, 0).toISOString(),
+    checkOut: new Date(2026, 8, 15, 12, 20).toISOString(),
+    minutes: 200,
+    taskId: 11,
+    taskKey: "MOB-1",
+    taskTitle: "Onboarding copy and screens",
+    streamId: 3,
+    streamName: "Mobile onboarding",
+    entrySource: "human",
+    tokensUsed: null,
+    apiCostUsd: null,
+    approvalStatus: "approved",
+    entrySha256: "a".repeat(64),
+  },
+  {
+    entryId: 15,
+    checkIn: new Date(2026, 8, 16, 9, 0).toISOString(),
+    checkOut: new Date(2026, 8, 16, 11, 40).toISOString(),
+    minutes: 160,
+    taskId: 11,
+    taskKey: "MOB-1",
+    taskTitle: "Onboarding copy and screens",
+    streamId: 3,
+    streamName: "Mobile onboarding",
+    entrySource: "agent",
+    tokensUsed: 48_200,
+    apiCostUsd: 0.61,
+    approvalStatus: "approved",
+    entrySha256: "b".repeat(64),
+  },
+];
+
+function contractorData(over: Record<string, unknown> = {}) {
+  const { lines, totals } = foldContractorLines(snapshotLines, 40);
+  return {
+    kind: "contractor" as const,
+    orgName: "Atelier 14",
+    org: { id: 1, name: "Atelier 14" },
+    invoiceId: 1,
+    reference: "PTD-CTR-2026-09-0001",
+    status: "issued",
+    contractor: {
+      userId: 3,
+      name: "Priya Indigo",
+      billingName: "Indigo Studio Ltd",
+      billingAddress: "9 Rue Bleue\n75009 Paris",
+      taxId: "FR90210445",
+      email: "priya@atelier14.demo",
+    },
+    period: { month: 9, year: 2026, label: "September 2026", from: "2026-09-01T00:00:00.000Z", to: "2026-09-30T23:59:59.999Z" },
+    currency: "USD",
+    rate: 40,
+    onlyApproved: true,
+    lines,
+    entries: snapshotLines,
+    totals,
+    excluded: { pendingMinutes: 0, rejectedMinutes: 0, unsubmittedMinutes: 0 },
+    alreadyInvoiced: [],
+    issuedAt: "2026-09-20T12:00:00.000Z",
+    certification: CERT,
+    ...over,
+  };
+}
+
+describe("renderContractorInvoicePdf", () => {
+  it("makes the contractor the issuer and the organization the bill-to", async () => {
+    const text = await pdfText(await renderContractorInvoicePdf(contractorData()));
+    expect(text).toContain("CONTRACTOR INVOICE");
+    expect(text).toContain("PTD-CTR-2026-09-0001");
+    expect(text).toContain("FROM");
+    expect(text).toContain("Indigo Studio Ltd");
+    expect(text).toContain("Priya Indigo");
+    expect(text).toContain("TAX ID  FR90210445");
+    expect(text).toContain("BILL TO");
+    expect(text).toContain("Atelier 14");
+  });
+
+  it("states the rate, the hours and the amount due", async () => {
+    const text = await pdfText(await renderContractorInvoicePdf(contractorData()));
+    expect(text).toContain("I.  TERMS");
+    expect(text).toContain("$40.00/h");
+    expect(text).toContain("6.00"); // 360 minutes
+    expect(text).toContain("III.  TOTAL DUE");
+    expect(text).toContain("$240.00");
+  });
+
+  it("gives every day a dated line with its source", async () => {
+    const text = await pdfText(await renderContractorInvoicePdf(contractorData()));
+    expect(text).toContain("II.  RECORDED WORK");
+    expect(text).toContain("Tue 15 Sep");
+    expect(text).toContain("Wed 16 Sep");
+    expect(text).toContain("MOB-1 Onboarding copy");
+    expect(text).toContain("HUMAN");
+    expect(text).toContain("AGENT");
+  });
+
+  it("says whether unapproved hours were left out", async () => {
+    expect(await pdfText(await renderContractorInvoicePdf(contractorData()))).toContain("Only entries approved by a manager are billed");
+    expect(await pdfText(await renderContractorInvoicePdf(contractorData({ onlyApproved: false })))).toContain("Every recorded entry in the period is billed");
+  });
+
+  it("states hours rather than money when the membership has no rate", async () => {
+    const { lines, totals } = foldContractorLines(snapshotLines, null);
+    const text = await pdfText(await renderContractorInvoicePdf(contractorData({ rate: null, lines, totals })));
+    expect(text).toContain("no rate recorded");
+    expect(text).toContain("6.00 h");
+  });
+
+  it("prices in the member's own currency", async () => {
+    const text = await pdfText(await renderContractorInvoicePdf(contractorData({ currency: "SEK" })));
+    expect(text).toContain("40.00 SEK/h");
+    expect(text).toContain("240.00 SEK");
+  });
+
+  it("renders a month with nothing in it without failing", async () => {
+    const { lines, totals } = foldContractorLines([], 40);
+    const pdf = await renderContractorInvoicePdf(contractorData({ lines, totals, entries: [] }));
+    expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
+    expect(await pdfText(pdf)).toContain("No billable sessions in this period.");
+  });
+});
+
+describe("the certification block", () => {
+  it("prints the reference, both forms of the hash, the key and the verification URL", async () => {
+    const text = await pdfText(await renderContractorInvoicePdf(contractorData()));
+    expect(text).toContain("CERTIFIED BY PTD");
+    expect(text).toContain("REFERENCE");
+    expect(text).toContain("PTD-CTR-2026-09-0001");
+    // Short enough to read aloud, and the full digest for a machine.
+    expect(text).toContain("752A 0434 BBB6");
+    expect(text).toContain(CERT.contentHash);
+    expect(text).toContain("ed25519 · key #1");
+    expect(text).toContain(CERT.verifyUrl);
+    expect(text).toContain("scan to verify");
+  });
+
+  it("draws the URL as a QR code as well as text", async () => {
+    const withQr = await renderContractorInvoicePdf(contractorData());
+    const withoutQr = await renderContractorInvoicePdf(contractorData({ certification: undefined }));
+    // The QR is hundreds of vector rectangles; the certified document is visibly larger.
+    expect(withQr.length).toBeGreaterThan(withoutQr.length + 2000);
+  });
+
+  it("says so on the face of a voided invoice", async () => {
+    const text = await pdfText(await renderContractorInvoicePdf(contractorData({ certification: { ...CERT, voided: true } })));
+    expect(text).toContain("VOIDED");
+    expect(text).toContain("this invoice has been withdrawn");
+  });
+
+  it("appears on a customer invoice too", async () => {
+    const text = await pdfText(await renderInvoicePdf(data({ certification: CERT })));
+    expect(text).toContain("CERTIFIED BY PTD");
+    expect(text).toContain(CERT.verifyUrl);
+  });
+
+  it("is absent from an uncertified document rather than printing empty headings", async () => {
+    const text = await pdfText(await renderInvoicePdf(data()));
+    expect(text).not.toContain("CERTIFIED BY PTD");
+  });
+});
+
+describe("customerDataFromSnapshot", () => {
+  it("re-draws an issued invoice from its own frozen record", async () => {
+    const snapshot = {
+      version: 1 as const,
+      kind: "customer" as const,
+      org: { id: 1, name: "Atelier 14" },
+      customer: { id: 1, name: "Maison Corbeau", billingAddress: null, billingEmail: null },
+      period: { month: 9, year: 2026, label: "September 2026", from: "2026-09-01T00:00:00.000Z", to: "2026-09-30T23:59:59.999Z" },
+      currency: "EUR",
+      rate: 120,
+      lines: snapshotLines.map((l) => ({ ...l, rate: 150, amountCents: Math.round((l.minutes / 60) * 150 * 100) })),
+      totals: { minutes: 360, amountCents: 90000, humanMinutes: 200, agentMinutes: 160, tokens: 48_200, costUsd: 0.61 },
+      issuedAt: "2026-09-20T12:00:00.000Z",
+      reference: "PTD-2026-09-0003",
+    };
+    const redrawn = customerDataFromSnapshot(snapshot, { invoiceId: 3, status: "issued", certification: CERT });
+    expect(redrawn.reference).toBe("PTD-2026-09-0003");
+    expect(redrawn.customer.name).toBe("Maison Corbeau");
+    expect(redrawn.currency).toBe("EUR");
+    expect(redrawn.totals.minutes).toBe(360);
+    // A stream rate overrode the customer's, and the snapshot remembers which.
+    expect(redrawn.lines[0].rate).toBe(150);
+    const text = await pdfText(await renderInvoicePdf(redrawn));
+    expect(text).toContain("PTD-2026-09-0003");
+    expect(text).toContain("AMOUNT");
+    // WinAnsi puts the euro sign at 0x80, which is what the extractor reads back.
+    expect(text).toContain("\u0080900.00");
   });
 });

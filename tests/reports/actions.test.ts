@@ -6,8 +6,12 @@ vi.mock("../../db", async () => {
   return { db: new FakeDb() };
 });
 
+import { generateKeyPairSync } from "crypto";
 import { db } from "../../db";
-import { invoices } from "../../db/schema";
+import { invoices, timeEntries } from "../../db/schema";
+import { encryptSecret } from "../../server/crypto";
+import { verifyHash } from "../../server/invoices/keys";
+import { contentHashOf } from "../../server/invoices/snapshot";
 import { ActionError, getAction, runAction, type ActionContext } from "../../server/actions/registry";
 import "../../server/actions/reports";
 import type { FakeDb } from "./fake-db";
@@ -209,17 +213,60 @@ describe("invoices", () => {
     await expect(runAction("invoice.preview", { customerId: 99, month: 9, year: 2026 }, ctx())).rejects.toThrow(/not in this organization/);
   });
 
-  it("records the invoice with the total in minutes and hands back its PDF url", async () => {
-    fake.queue([{ name: "Atelier 14" }], [{ id: 1, name: "Maison Corbeau", billingAddress: null, billingEmail: null }], [entry()]);
+  it("issues a certified invoice: snapshot, hash, signature, verify token and a locked ledger", async () => {
+    // A real Ed25519 pair, sealed the way signing_keys stores it, so the
+    // signature this test reads back is one that actually verifies.
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const key = {
+      id: 1,
+      algorithm: "ed25519",
+      publicKey: publicKey.export({ type: "spki", format: "pem" }).toString(),
+      privateKeySealed: encryptSecret(privateKey.export({ type: "pkcs8", format: "pem" }).toString()),
+      createdAt: new Date(),
+      retiredAt: null,
+    };
+    fake.queue(
+      [{ name: "Atelier 14" }],
+      [{ id: 1, name: "Maison Corbeau", billingAddress: null, billingEmail: null, hourlyRate: 120, currency: "EUR" }],
+      [entry({ lockedInvoiceId: null })],
+      [key], // activeSigningKey
+      [{ sealed: key.privateKeySealed }] // signHash
+    );
     const result: any = await runAction("invoice.generate", { customerId: 1, month: 9, year: 2026 }, ctx());
     expect(result.pdfUrl).toBe("/api/track/invoices/77.pdf");
     expect(result.reference).toBe("PTD-2026-09-0077");
-    expect(result.status).toBe("generated");
+    expect(result.status).toBe("issued");
+    expect(result.kind).toBe("customer");
+    expect(result.verifyUrl).toMatch(/\/verify\/[0-9a-f]{64}$/);
+    expect(result.currency).toBe("EUR");
+    // 120 minutes at €120/h.
+    expect(result.totals.amountCents).toBe(24000);
 
     const written = fake.inserts.find((i) => i.table === invoices)!;
-    expect(written.values).toMatchObject({ orgId: 5, customerId: 1, userId: 2, month: 9, year: 2026, status: "generated", totalAmount: 120 });
-    // The url is stamped back onto the row once the id is known.
-    expect(fake.updates.at(-1)!.values).toMatchObject({ pdfUrl: "/api/track/invoices/77.pdf" });
+    expect(written.values).toMatchObject({ orgId: 5, customerId: 1, userId: 2, kind: "customer", month: 9, year: 2026, status: "issued", currency: "EUR", amountCents: 24000 });
+
+    const certified = fake.updates.find((u) => u.table === invoices)!.values;
+    expect(certified).toMatchObject({ pdfUrl: "/api/track/invoices/77.pdf", reference: "PTD-2026-09-0077", signingKeyId: 1, status: "issued" });
+    expect(certified.verifyToken).toMatch(/^[0-9a-f]{64}$/);
+    // The stored hash is the hash of the stored record, and the signature verifies.
+    expect(contentHashOf(certified.snapshot)).toBe(certified.contentHash);
+    expect(verifyHash(certified.contentHash, certified.signature, key.publicKey)).toBe(true);
+
+    // And the entries it covers are frozen against later edits.
+    const lock = fake.updates.find((u) => u.table === timeEntries)!.values;
+    expect(lock).toMatchObject({ lockedInvoiceId: 77 });
+  });
+
+  it("refuses to issue a month whose entries another invoice already froze", async () => {
+    fake.queue(
+      [{ name: "Atelier 14" }],
+      [{ id: 1, name: "Maison Corbeau", billingAddress: null, billingEmail: null, hourlyRate: null, currency: "USD" }],
+      [entry({ lockedInvoiceId: 4 })]
+    );
+    await expect(runAction("invoice.generate", { customerId: 1, month: 9, year: 2026 }, ctx())).rejects.toThrow(
+      /already frozen into invoice 4.*Void it first/s
+    );
+    expect(fake.inserts).toHaveLength(0);
   });
 
   it("rejects a month outside 1–12", async () => {

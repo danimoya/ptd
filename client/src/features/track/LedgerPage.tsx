@@ -1,13 +1,23 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { endOfMonth, format, isSameDay, startOfMonth } from "date-fns";
+import { BadgeCheck, Loader2, Send } from "lucide-react";
 import { Calendar as CalendarUI } from "@/components/ui/calendar";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { canAccess, useMe } from "@/hooks/use-me";
 import EntryRow from "./EntryRow";
 import { formatMinutes, formatTokens, formatUsd, minutesBetween } from "./format";
-import { deleteEntry, listEntries, trackKeys, type EntryView } from "./api";
+import {
+  approveEntries,
+  deleteEntry,
+  listEntries,
+  rejectEntries,
+  submitHours,
+  trackKeys,
+  type EntryView,
+} from "./api";
+import { getMemberBilling } from "./reports/api";
 
 /**
  * The ledger: a month of pages, one day open at a time.
@@ -49,6 +59,59 @@ export default function LedgerPage() {
     onError: (e: Error) => toast({ title: "Could not strike the entry", description: e.message, variant: "destructive" }),
   });
 
+  /* ── Approvals ──────────────────────────────────────────────────────────
+   * An external member's finished entries close as `pending`, so this page is
+   * where both halves of that workflow live: the member hands a month over, and
+   * a manager reading the Team view signs lines off or sends them back. Neither
+   * is a separate screen, because the thing being judged is the ledger line.
+   */
+  const myBilling = useQuery({
+    queryKey: ["track", "my-billing", me?.user.id],
+    queryFn: () => getMemberBilling(me!.user.id),
+    enabled: Boolean(me?.user.id),
+  });
+  const needsSubmitting = myBilling.data?.requireApproval ?? false;
+
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: trackKeys.all });
+    qc.invalidateQueries({ queryKey: ["track", "contractors"] });
+  };
+
+  const submit = useMutation({
+    mutationFn: () => submitHours({ from: startOfMonth(month).toISOString(), to: endOfMonth(month).toISOString() }),
+    onSuccess: (r) => {
+      refresh();
+      toast({
+        title: r.submitted > 0 ? `${r.submitted} ${r.submitted === 1 ? "line" : "lines"} submitted` : "Nothing left to submit",
+        description:
+          r.submitted > 0
+            ? `${formatMinutes(r.minutes)} of ${format(month, "MMMM")} is now waiting for a manager.`
+            : r.alreadyApproved > 0
+              ? `All ${r.alreadyApproved} of this month's lines are already approved.`
+              : "There are no finished lines in this month.",
+      });
+    },
+    onError: (e: Error) => toast({ title: "Could not submit the month", description: e.message, variant: "destructive" }),
+  });
+
+  const approve = useMutation({
+    mutationFn: (entryIds: number[]) => approveEntries({ entryIds }),
+    onSuccess: (r) => {
+      refresh();
+      toast({ title: `${r.approved} ${r.approved === 1 ? "line" : "lines"} approved`, description: `${formatMinutes(r.minutes)} can now be invoiced.` });
+    },
+    onError: (e: Error) => toast({ title: "Could not approve", description: e.message, variant: "destructive" }),
+  });
+
+  const reject = useMutation({
+    mutationFn: ({ entryIds, reason }: { entryIds: number[]; reason: string }) => rejectEntries({ entryIds, reason }),
+    onSuccess: (r) => {
+      refresh();
+      toast({ title: `${r.rejected} ${r.rejected === 1 ? "line" : "lines"} sent back`, description: r.reason });
+    },
+    onError: (e: Error) => toast({ title: "Could not reject", description: e.message, variant: "destructive" }),
+  });
+
   const rows = entries.data ?? [];
   const markedDays = useMemo(() => {
     const seen = new Map<string, Date>();
@@ -88,7 +151,13 @@ export default function LedgerPage() {
     return t;
   }, [dayRows]);
 
-  const canStrike = (entry: EntryView) => isManager || entry.userId === me?.user.id;
+  const canStrike = (entry: EntryView) => (isManager || entry.userId === me?.user.id) && !entry.lockedInvoiceId;
+
+  // A manager may sign off anyone's hours, including their own; the server allows
+  // it and the alternative — an org with one manager whose hours nobody can
+  // approve — is worse than the conflict of interest.
+  const pendingToday = dayRows.filter((e) => e.approvalStatus === "pending" && !e.lockedInvoiceId);
+  const acting = approve.isPending || reject.isPending;
 
   return (
     <div className="animate-ink-fade-in">
@@ -101,6 +170,19 @@ export default function LedgerPage() {
             <span className="italic">Pages</span> by day
           </h1>
         </div>
+        <div className="flex items-center gap-4 shrink-0">
+        {needsSubmitting && (
+          <button
+            onClick={() => submit.mutate()}
+            disabled={submit.isPending}
+            title={`Hand every finished line of ${format(month, "MMMM")} to a manager for approval. Only approved hours can be invoiced.`}
+            className="h-9 px-3 rounded-sm border border-ink text-ink hover:bg-ink hover:text-parchment transition-colors focus-ink inline-flex items-center gap-2 disabled:opacity-60"
+            data-testid="ledger-submit-month"
+          >
+            {submit.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+            <span className="eyebrow text-[9px] !text-current">submit {format(month, "MMM")}</span>
+          </button>
+        )}
         {isManager && (
           <label className="flex items-center gap-3 cursor-pointer select-none shrink-0">
             <span className="text-right">
@@ -115,6 +197,7 @@ export default function LedgerPage() {
             />
           </label>
         )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[auto_minmax(0,1fr)] gap-6 lg:gap-10 items-start">
@@ -174,6 +257,27 @@ export default function LedgerPage() {
             </div>
           </div>
 
+          {isManager && pendingToday.length > 0 && (
+            <div
+              className="mb-4 pb-4 border-b border-rule flex flex-wrap items-center gap-3"
+              data-testid="ledger-pending-banner"
+            >
+              <span className="eyebrow text-[9px]">
+                {pendingToday.length} {pendingToday.length === 1 ? "line waits" : "lines wait"} for approval ·{" "}
+                {formatMinutes(pendingToday.reduce((t, e) => t + minutesBetween(e.checkIn, e.checkOut), 0))}
+              </span>
+              <button
+                onClick={() => approve.mutate(pendingToday.map((e) => e.id))}
+                disabled={acting}
+                className="h-8 px-3 rounded-sm border border-ink bg-ink text-parchment hover:bg-parchment hover:text-ink transition-colors focus-ink inline-flex items-center gap-2 disabled:opacity-60"
+                data-testid="ledger-approve-day"
+              >
+                {approve.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <BadgeCheck className="h-3 w-3" />}
+                <span className="eyebrow text-[9px] !text-current">approve this page</span>
+              </button>
+            </div>
+          )}
+
           {entries.isLoading ? (
             <div className="py-10 text-center eyebrow">Loading pages…</div>
           ) : entries.isError ? (
@@ -193,6 +297,9 @@ export default function LedgerPage() {
                   showWho={team}
                   onDelete={canStrike(entry) ? strike.mutate : undefined}
                   deleting={strike.isPending}
+                  onApprove={isManager ? (id) => approve.mutate([id]) : undefined}
+                  onReject={isManager ? (id, reason) => reject.mutate({ entryIds: [id], reason }) : undefined}
+                  acting={acting}
                 />
               ))}
             </ul>

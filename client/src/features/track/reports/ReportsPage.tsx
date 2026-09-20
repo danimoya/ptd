@@ -20,6 +20,7 @@ import { getRange, reportKeys, type GroupBy } from "./api";
 import { Failed, Loading, MetricCell, Panel } from "./bits";
 import ComparisonCard from "./ComparisonCard";
 import GoalMeters from "./GoalMeters";
+import ContractorInvoices from "./ContractorInvoices";
 import InvoiceDialog, { InvoiceLedger } from "./InvoiceDialog";
 import RangeBar from "./RangeBar";
 import SearchPanel from "./SearchPanel";
@@ -187,7 +188,11 @@ export default function ReportsPage() {
             </div>
           )}
 
-          <SearchPanel range={range} scope={scope} numeral={isManager ? "vii." : "v."} />
+          {/* Contractor invoices are not manager-only: a member is the party being
+              paid, so they read their own documents and their verification links. */}
+          <ContractorInvoices numeral={isManager ? "vii." : "v."} />
+
+          <SearchPanel range={range} scope={scope} numeral={isManager ? "viii." : "vi."} />
         </>
       )}
     </div>

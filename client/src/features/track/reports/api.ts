@@ -304,9 +304,174 @@ export interface InvoiceRow {
   year: number;
   status: string;
   totalMinutes: number;
+  amountCents: number | null;
+  currency: string;
+  reference: string | null;
+  contentHash: string | null;
+  verifyToken: string | null;
+  verifyUrl: string | null;
+  voidedAt: string | null;
+  voided: boolean;
   pdfUrl: string;
   periodLabel: string;
   createdAt: string;
+}
+
+/* ── Contractor billing and certified invoices ───────────────────────── */
+
+export interface MemberBilling {
+  userId: number;
+  displayName: string;
+  email: string;
+  isAgent: boolean;
+  role: string;
+  billable: boolean;
+  hourlyRate: number | null;
+  currency: string;
+  billingName: string | null;
+  billingAddress: string | null;
+  taxId: string | null;
+  requireApproval: boolean;
+}
+
+export interface ContractorLine {
+  date: string;
+  dateLabel: string;
+  streamId: number | null;
+  streamName: string | null;
+  taskId: number | null;
+  taskKey: string | null;
+  taskTitle: string | null;
+  sessions: number;
+  minutes: number;
+  source: "human" | "agent" | "mixed";
+  tokens: number;
+  costUsd: number;
+  amountCents: number | null;
+  approval: string;
+}
+
+export interface ContractorTotals {
+  sessions: number;
+  minutes: number;
+  hours: number;
+  humanMinutes: number;
+  agentMinutes: number;
+  tokens: number;
+  costUsd: number;
+  amountCents: number | null;
+}
+
+export interface ContractorPreview {
+  kind: "contractor";
+  orgName: string;
+  invoiceId: number | null;
+  reference: string;
+  status: string;
+  contractor: { userId: number; name: string; billingName: string | null; billingAddress: string | null; taxId: string | null; email: string };
+  period: { month: number; year: number; label: string; from: string; to: string };
+  currency: string;
+  rate: number | null;
+  onlyApproved: boolean;
+  lines: ContractorLine[];
+  entries: { entryId: number; minutes: number; approvalStatus: string }[];
+  totals: ContractorTotals;
+  excluded: { pendingMinutes: number; rejectedMinutes: number; unsubmittedMinutes: number };
+  alreadyInvoiced: { entryId: number; invoiceId: number }[];
+  issuedAt: string;
+}
+
+export interface GeneratedContractorInvoice {
+  invoiceId: number;
+  kind: "contractor";
+  reference: string;
+  verifyUrl: string;
+  verifyToken: string;
+  pdfUrl: string;
+  contentHash: string;
+  signingKeyId: number;
+  status: string;
+  contractor: ContractorPreview["contractor"];
+  period: ContractorPreview["period"];
+  currency: string;
+  rate: number | null;
+  totals: ContractorTotals;
+  lineCount: number;
+  entryCount: number;
+  lockedEntryIds: number[];
+  onlyApproved: boolean;
+}
+
+export interface ContractorInvoiceRow {
+  id: number;
+  memberUserId: number | null;
+  memberName: string | null;
+  reference: string | null;
+  month: number;
+  year: number;
+  periodLabel: string;
+  status: string;
+  currency: string;
+  rate: number | null;
+  totalMinutes: number;
+  amountCents: number | null;
+  contentHash: string | null;
+  signingKeyId: number | null;
+  verifyToken: string | null;
+  verifyUrl: string | null;
+  pdfUrl: string;
+  issuedAt: string | null;
+  voidedAt: string | null;
+  voided: boolean;
+}
+
+export interface ContractorsOverview {
+  period: { month: number; year: number; label: string };
+  contractors: {
+    userId: number;
+    displayName: string;
+    billingName: string | null;
+    hourlyRate: number | null;
+    currency: string;
+    requireApproval: boolean;
+    minutes: { approved: number; pending: number; rejected: number; none: number; billable: number };
+    amountCents: number | null;
+    invoice: { invoiceId: number; reference: string | null; voided: boolean } | null;
+  }[];
+}
+
+export const getMemberBilling = (userId: number) => callAction<MemberBilling>("member.billing", { userId });
+
+export const previewContractorInvoice = (args: { userId: number; month: number; year: number; onlyApproved?: boolean }) =>
+  callAction<ContractorPreview>("invoice.contractor_preview", args as unknown as Record<string, unknown>);
+
+export const generateContractorInvoice = (args: { userId: number; month: number; year: number; onlyApproved?: boolean }) =>
+  callAction<GeneratedContractorInvoice>("invoice.contractor_generate", args as unknown as Record<string, unknown>);
+
+export const listContractorInvoices = (args: { userId?: number } = {}) =>
+  callAction<ContractorInvoiceRow[]>("invoice.contractor_list", args as Record<string, unknown>);
+
+export const getContractors = (args: { month?: number; year?: number } = {}) =>
+  callAction<ContractorsOverview>("billing.contractors", args as Record<string, unknown>);
+
+export const voidInvoice = (args: { invoiceId: number; reason: string }) =>
+  callAction<{ invoiceId: number; reference: string | null; voidedAt: string; unlockedEntries: number[]; reason: string }>("invoice.void", args as unknown as Record<string, unknown>);
+
+/** "$45/h", or "1,200 SEK/h" where the code has no symbol. */
+const SYMBOLS: Record<string, string> = { USD: "$", EUR: "\u20ac", GBP: "\u00a3", JPY: "\u00a5" };
+
+export function formatMoney(cents: number | null, currency = "USD"): string {
+  if (cents === null) return "\u2013";
+  const amount = (cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const symbol = SYMBOLS[currency.toUpperCase()];
+  return symbol ? `${symbol}${amount}` : `${amount} ${currency.toUpperCase()}`;
+}
+
+export function formatRate(rate: number | null, currency = "USD"): string {
+  if (rate === null) return "no rate";
+  const amount = rate.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  const symbol = SYMBOLS[currency.toUpperCase()];
+  return symbol ? `${symbol}${amount}/h` : `${amount} ${currency.toUpperCase()}/h`;
 }
 
 /* ── Query keys ──────────────────────────────────────────────────────── */
@@ -321,6 +486,9 @@ export const reportKeys = {
   goals: ["track", "reports", "goals"] as const,
   invoices: ["track", "reports", "invoices"] as const,
   invoicePreview: (args: unknown) => ["track", "reports", "invoice-preview", args] as const,
+  contractorInvoices: ["track", "contractors", "invoices"] as const,
+  contractors: (args: unknown) => ["track", "contractors", "overview", args] as const,
+  contractorPreview: (args: unknown) => ["track", "contractors", "preview", args] as const,
 };
 
 /* ── Reads ───────────────────────────────────────────────────────────── */

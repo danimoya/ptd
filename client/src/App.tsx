@@ -6,6 +6,7 @@ import OAuthConsent from "./pages/OAuthConsent";
 import Overview from "./pages/Overview";
 import Plan from "./pages/Plan";
 import Track from "./pages/Track";
+import Verify from "./pages/Verify";
 import Org from "./pages/Org";
 import { isTokenExpired, signOut } from "@/lib/auth";
 import { canAccess, useMe } from "@/hooks/use-me";
@@ -49,6 +50,9 @@ export default function App() {
         <Route path="/oauth/consent" element={<OAuthConsent />} />
         <Route path="/" element={<Root />} />
         <Route path="/welcome" element={<Landing />} />
+        {/* Public and outside the shell: whoever is checking an invoice has no
+            account here, and a verification page is not a place to sell them one. */}
+        <Route path="/verify/:token" element={<Verify />} />
         <Route element={<Layout />}>
           <Route path="/overview/*" element={<ProtectedRoute><RequireRole min="manager"><Overview /></RequireRole></ProtectedRoute>} />
           <Route path="/plan/*" element={<ProtectedRoute><RequireRole min="manager"><Plan /></RequireRole></ProtectedRoute>} />

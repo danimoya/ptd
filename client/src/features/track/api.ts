@@ -16,6 +16,8 @@ import { api, callAction } from "@/lib/api";
 
 export type EntrySource = "human" | "agent";
 
+export type ApprovalStatus = "none" | "pending" | "approved" | "rejected";
+
 export interface EntryView {
   id: number;
   userId: number;
@@ -36,6 +38,11 @@ export interface EntryView {
   agentLabel: string | null;
   tokensUsed: number | null;
   apiCostUsd: number | null;
+  approvalStatus: ApprovalStatus;
+  approvedAt: string | null;
+  approvedBy: number | null;
+  /** Set once a certified invoice has frozen this line; it then refuses edits. */
+  lockedInvoiceId: number | null;
 }
 
 export interface OpenEntry extends EntryView {
@@ -157,6 +164,39 @@ export const updateEntry = (args: { entryId: number; checkIn?: string; checkOut?
   callAction<{ entry: EntryView }>("time_entry.update", args as Record<string, unknown>);
 export const logPast = (args: { checkIn: string; checkOut: string; taskId?: number; streamId?: number; customerId?: number; notes?: string; isBreak?: boolean }) =>
   callAction<{ entry: EntryView; minutes: number }>("time_entry.log_past", args as Record<string, unknown>);
+/* ── Approvals ───────────────────────────────────────────────────────── */
+
+export interface SubmitResult {
+  submitted: number;
+  minutes: number;
+  entryIds: number[];
+  alreadyApproved: number;
+}
+
+export interface ApproveResult {
+  approved: number;
+  minutes: number;
+  entryIds: number[];
+  approvedBy?: string;
+  approvedAt?: string;
+}
+
+export interface RejectResult {
+  rejected: number;
+  minutes: number;
+  entryIds: number[];
+  reason: string;
+}
+
+/** A member hands a window of their own finished hours to a manager. */
+export const submitHours = (args: { from: string; to: string }) => callAction<SubmitResult>("time_entry.submit", args);
+
+export const approveEntries = (args: { entryIds?: number[]; userId?: number; from?: string; to?: string }) =>
+  callAction<ApproveResult>("time_entry.approve", args as Record<string, unknown>);
+
+export const rejectEntries = (args: { entryIds: number[]; reason: string }) =>
+  callAction<RejectResult>("time_entry.reject", args as unknown as Record<string, unknown>);
+
 export const createTemplate = (args: { name: string; icon?: string; notes?: string; streamId?: number; customerId?: number; isBreak?: boolean }) =>
   callAction<TemplateRow>("template.create", args as Record<string, unknown>);
 export const deleteTemplate = (templateId: number) => callAction<{ deleted: boolean }>("template.delete", { templateId });

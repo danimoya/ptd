@@ -12,7 +12,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText } from "lucide-react";
+import { ExternalLink, FileText, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -20,6 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import { formatMinutes, formatTokens, formatUsd } from "../format";
 import {
   fetchInvoicePdfUrl,
+  formatMoney,
   generateInvoice,
   getStreamsForFilter,
   listInvoices,
@@ -269,15 +270,32 @@ export function InvoiceLedger() {
     <ul className="divide-y divide-rule">
       {rows.map((r) => (
         <li key={r.id} className="py-2.5 flex items-center gap-3">
-          <span className="ledger-cell text-ink-muted tabular-nums w-10 shrink-0">{String(r.id).padStart(4, "0")}</span>
+          <span className="ledger-cell text-ink-muted tabular-nums shrink-0">{r.reference ?? String(r.id).padStart(4, "0")}</span>
           <div className="min-w-0 flex-1">
             <div className="font-display truncate">{r.customerName ?? "(customer removed)"}</div>
             <div className="eyebrow text-[9px]">
-              {r.periodLabel} · {r.status}
+              {r.periodLabel} · {r.voided ? "voided" : r.status}
               {r.issuedBy && ` · ${r.issuedBy}`}
+              {r.amountCents !== null && ` · ${formatMinutes(r.totalMinutes)}`}
             </div>
           </div>
-          <span className="ledger-cell tabular-nums shrink-0">{formatMinutes(r.totalMinutes)}</span>
+          <span className="ledger-cell tabular-nums shrink-0">
+            {r.amountCents !== null ? formatMoney(r.amountCents, r.currency) : formatMinutes(r.totalMinutes)}
+          </span>
+          {r.verifyUrl ? (
+            <a
+              href={r.verifyUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="h-8 px-2 rounded-sm inline-flex items-center gap-1.5 text-ink-muted hover:text-vermilion focus-ink shrink-0"
+              title="Open the public verification page — this link can be handed to the customer"
+              data-testid={`invoice-verify-${r.id}`}
+            >
+              <ShieldCheck className="h-3.5 w-3.5" />
+              <span className="eyebrow text-[9px] !text-current">verify</span>
+              <ExternalLink className="h-2.5 w-2.5" />
+            </a>
+          ) : null}
           <Button
             variant="ghost"
             className="h-8 rounded-sm font-display text-sm shrink-0"
