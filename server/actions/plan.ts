@@ -39,7 +39,7 @@ import {
 import { actorFrom, diffTask, listEventsForTask, recordEvent, summariseChanges } from "../plan/taskEvents";
 
 /**
- * Plan surface actions — the Kanttban tool set, re-cut for PTD's org/stream/app
+ * Plan surface actions — the the original board tool set, re-cut for PTD's org/stream/app
  * schema. Every one of these is simultaneously an MCP tool and a
  * POST /api/actions/<name> endpoint; the registry applies the role gate, so
  * nothing in this file re-checks it except where the rule is finer-grained
@@ -279,7 +279,7 @@ defineAction({
         orgId: ctx.orgId,
         title: args.title,
         description: args.description ?? null,
-        // Kanttban's rule: a card with a start date belongs on the timeline.
+        // the original board's rule: a card with a start date belongs on the timeline.
         status: args.status ?? (startDate ? "in-progress" : "backlog"),
         streamId: args.streamId ?? null,
         appId: args.appId ?? null,

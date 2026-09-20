@@ -7,9 +7,9 @@ import { fetchSystemic } from "./api";
 import { bandTextClass, formatUsd } from "./format";
 
 /**
- * Sprinter's "systemic themes", generalised: a stream attached to several apps is
+ * the original backlog tracker's "systemic themes", generalised: a stream attached to several apps is
  * a concern that recurs across the estate, and is usually cheaper to fix once at
- * the platform level than app by app. The slider is the same knob Sprinter hard-coded at 3.
+ * the platform level than app by app. The slider is the same knob the original backlog tracker hard-coded at 3.
  */
 export default function SystemicTab() {
   const [minApps, setMinApps] = useState(2);

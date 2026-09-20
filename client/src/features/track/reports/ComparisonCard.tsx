@@ -3,7 +3,7 @@
  *
  * Eight rows, each with the current figure, the prior figure beneath it in small
  * caps, and an arrow that is coloured by whether the movement is welcome —
- * more hours is sage, more agent dollars is vermilion. TTM's card did the same
+ * more hours is sage, more agent dollars is vermilion. the original tracker's card did the same
  * for work and recess; the agent columns are the new part, and the reason a
  * manager opens this page at all.
  */

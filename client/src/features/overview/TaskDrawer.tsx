@@ -16,7 +16,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 /**
- * Sprinter's detail drawer. Read-only on purpose: editing a task is the Plan
+ * the original backlog tracker's detail drawer. Read-only on purpose: editing a task is the Plan
  * surface's job, so the drawer ends with a link into it rather than a form that
  * would duplicate Plan's validation.
  */

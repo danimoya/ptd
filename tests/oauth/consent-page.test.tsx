@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { configure, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import OAuthConsent from "../../client/src/pages/OAuthConsent";
@@ -10,6 +10,12 @@ import OAuthConsent from "../../client/src/pages/OAuthConsent";
 // through @vitejs/plugin-react (automatic runtime), where no import is needed —
 // so the global is set here rather than adding an import to the page.
 (globalThis as unknown as { React: typeof React }).React = React;
+
+// The page settles over a chain of three fetch-driven effects (client-info →
+// me → actions). testing-library's 1s default is a fine budget on an idle
+// machine and a coin toss on a busy one — this box runs several agents and
+// their builds at once — so the async waits get a real timeout instead.
+configure({ asyncUtilTimeout: 5_000 });
 
 const CHALLENGE = "a".repeat(43);
 const QUERY =
@@ -81,6 +87,19 @@ function mountWith(query = QUERY, token?: string) {
   );
 }
 
+/**
+ * The page mounts with placeholders and fills in over three chained fetches, so
+ * an element existing is not the same as the page being ready. `findBy*` only
+ * waits for existence — it would happily assert against the "…" placeholder, or
+ * click Approve while it is still disabled — so every signed-in test waits for
+ * the settled state here first. (This is what produced the one-in-ten failure
+ * on a loaded machine: findByTestId("consent-role") resolved on the placeholder
+ * render, before /api/auth/me came back.)
+ */
+async function waitUntilSettled() {
+  await waitFor(() => expect(screen.getByTestId("consent-role")).toHaveTextContent("owner"));
+}
+
 beforeEach(() => {
   posted = null;
   Object.defineProperty(window, "location", { value: { ...window.location, assign: vi.fn() }, writable: true });
@@ -104,18 +123,18 @@ describe("OAuthConsent", () => {
 
   it("shows the role held in the chosen org and the tools it grants", async () => {
     mountWith(QUERY, liveJwt());
-    expect(await screen.findByTestId("consent-role")).toHaveTextContent("owner");
+    await waitUntilSettled();
     expect(screen.getByTestId("consent-org")).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText("whoami")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("whoami")).toBeInTheDocument(), { timeout: 5_000 });
     expect(screen.getByText("task.create")).toBeInTheDocument();
     expect(screen.getByText(/3 tools/)).toBeInTheDocument();
   });
 
   it("posts the original authorize parameters and navigates where the server says", async () => {
     mountWith(QUERY, liveJwt());
-    const approve = await screen.findByTestId("consent-approve");
-    await userEvent.click(approve);
-    await waitFor(() => expect(posted).not.toBeNull());
+    await waitUntilSettled();
+    await userEvent.click(screen.getByTestId("consent-approve"));
+    await waitFor(() => expect(posted).not.toBeNull(), { timeout: 5_000 });
     expect(posted!.body).toMatchObject({
       decision: "approve",
       client_id: "ptdc_1",
@@ -130,8 +149,9 @@ describe("OAuthConsent", () => {
 
   it("sends a denial through the server too, never building a callback URL itself", async () => {
     mountWith(QUERY, liveJwt());
-    await userEvent.click(await screen.findByTestId("consent-deny"));
-    await waitFor(() => expect(posted).not.toBeNull());
+    await waitUntilSettled();
+    await userEvent.click(screen.getByTestId("consent-deny"));
+    await waitFor(() => expect(posted).not.toBeNull(), { timeout: 5_000 });
     expect(posted!.body.decision).toBe("deny");
   });
 });

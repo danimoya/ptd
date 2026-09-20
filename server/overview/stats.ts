@@ -69,7 +69,7 @@ export async function taskCounts(orgId: number) {
   };
 }
 
-/** Sprinter's bands: critical 75-100, high 50-74, medium 25-49, low 0-24 — open tasks only. */
+/** the original backlog tracker's bands: critical 75-100, high 50-74, medium 25-49, low 0-24 — open tasks only. */
 async function priorityBands(orgId: number) {
   const [row] = (await db.execute(sql`
     select

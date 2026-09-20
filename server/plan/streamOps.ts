@@ -8,7 +8,7 @@ import { appIsOnStream, assertApp, assertStream, fetchOrgTasks } from "./taskOps
 /**
  * Stream (swim-lane) management.
  *
- * The one real divergence from Kanttban: there a stream was the free-text
+ * The one real divergence from the original board: there a stream was the free-text
  * `tasks.stream` column, so "rename" was a bulk UPDATE over cards and the
  * stream list was a projection. Here `streams` is a table with a colour,
  * position, customer, agent budget and an app attachment list, and

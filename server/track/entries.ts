@@ -82,7 +82,7 @@ export interface Refs {
 
 /**
  * Validate that every id belongs to this org and fill in what can be derived:
- * a task implies its stream, a stream implies its customer. Mirrors TTM, which
+ * a task implies its stream, a stream implies its customer. Mirrors the original tracker, which
  * let an agent name only a task and still get a correctly attributed row.
  */
 export async function resolveRefs(orgId: number, refs: Refs): Promise<Required<Refs>> {
@@ -139,7 +139,7 @@ export async function templateFor(orgId: number, userId: number, templateId: num
 /* ── Windows ─────────────────────────────────────────────────────────── */
 
 /**
- * An entry counts as inside a window by where it started, which is how TTM's
+ * An entry counts as inside a window by where it started, which is how the original tracker's
  * day pages and every report here read: a session belongs to the day it opened.
  */
 export function windowFilters(from?: Date, to?: Date): SQL[] {

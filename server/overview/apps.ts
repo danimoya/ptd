@@ -89,7 +89,7 @@ export async function appStats(orgId: number, appId: number) {
   };
 }
 
-/** Streams whose work crosses `minApps` or more apps — Sprinter's "systemic themes". */
+/** Streams whose work crosses `minApps` or more apps — the original backlog tracker's "systemic themes". */
 export async function systemicStreams(orgId: number, minApps = 2) {
   // ORDER BY is by ordinal on purpose: Nano 4.40 resolves either the select
   // aliases or the GROUP BY columns in ORDER BY, never a mix of the two, and it

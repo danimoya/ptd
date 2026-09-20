@@ -1,7 +1,7 @@
 /**
  * Customers against their weekly pledge.
  *
- * Ported from TTM's CustomerGoalProgress, with two changes: the figure comes
+ * Ported from the original tracker's CustomerGoalProgress, with two changes: the figure comes
  * from the server (`customer.goals`) rather than being recomputed in the
  * browser from every entry ever logged, and each meter says how much of the
  * week's hours a machine put in — a customer whose 20 hours were four-fifths

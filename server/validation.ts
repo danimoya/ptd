@@ -8,7 +8,7 @@ import { z, ZodSchema } from "zod";
  * is also what the MCP manifest publishes, so there is exactly one description
  * of each call's arguments.
  *
- * This file used to carry a parallel set of TimeTracker schemas — projects,
+ * This file used to carry a parallel set of the original tracker schemas — projects,
  * invoices, reports, bulk edits, and a second copy of the register/login rules
  * whose password minimum had already drifted out of step with auth.ts. They are
  * gone: `projects` no longer exists (streams replaced it), invoices and reports

@@ -9,9 +9,9 @@ import type { ActionContext, Via } from "../actions/registry";
  *
  * Every task mutation lands here as one `task_events` row AND one outbound
  * webhook, so the Edit-card History panel, `task.history` (MCP) and any
- * org integration all read the same story. Kanttban's kinds are carried
+ * org integration all read the same story. the original board's kinds are carried
  * over; PTD adds `assigned`, `priority_changed` and `deleted` because the
- * schema has fields Kanttban did not (assignee events used to be
+ * schema has fields the original board did not (assignee events used to be
  * `assignee_changed`, urgency/impact/effort did not exist at all).
  */
 export type EventKind =
@@ -136,7 +136,7 @@ export async function listEventsForTask(taskId: number, orgId: number, limit = 5
   return rows.filter((r) => r.orgId === orgId) as TaskEvent[];
 }
 
-/** Fields whose changes are worth a history row. Ported from Kanttban's diffTask + PTD's new columns. */
+/** Fields whose changes are worth a history row. Ported from the original board's diffTask + PTD's new columns. */
 const DIFF_FIELDS = [
   "title",
   "description",

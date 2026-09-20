@@ -20,7 +20,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /* ───────────────────────── reads ───────────────────────── */
 
-/** Every task in the org. The graph algorithms all work on this in JS, like Kanttban. */
+/** Every task in the org. The graph algorithms all work on this in JS, like the original board. */
 export async function fetchOrgTasks(orgId: number): Promise<Task[]> {
   return (await db.select().from(tasks).where(eq(tasks.orgId, orgId))) as Task[];
 }
@@ -91,7 +91,7 @@ export function isBlocked(task: Task, all: Task[]): boolean {
 
 /**
  * Longest chain through the dependency DAG weighted by estimatedDuration —
- * Kanttban's critical path. O(V+E) memoised DFS; safe against cycles because
+ * the original board's critical path. O(V+E) memoised DFS; safe against cycles because
  * every dependency write goes through wouldCreateCycle first, and the `seen`
  * set makes it terminate even if a legacy row slipped one in.
  */
@@ -125,7 +125,7 @@ export function computeCriticalPath(all: Task[]): { length: number; path: Task[]
 }
 
 /**
- * Kanttban's status rule: a card with a startDate belongs on the timeline, a
+ * the original board's status rule: a card with a startDate belongs on the timeline, a
  * card without one belongs in the backlog. An explicit status from the caller
  * always wins; completed cards are never re-derived.
  */
@@ -352,7 +352,7 @@ export function assertDependencies(taskId: number | null, raw: number[], all: Ta
  *
  * Shared by every action that can move a card in time so the REST face, the
  * MCP face and the board all cascade identically. Side effects, both ported
- * from Kanttban: a shifted row that picks up a startDate while still flagged
+ * from the original board: a shifted row that picks up a startDate while still flagged
  * "backlog" is promoted to "in-progress", and every dependent that actually
  * moved gets its own `cascade_shifted` history row so the card's history
  * explains a date it did not choose itself.

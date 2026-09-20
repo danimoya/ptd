@@ -13,7 +13,7 @@
 //     attribution is immutable once written. See server/track/attribution.ts.
 //
 //  2. A member has at most one open entry. `time_entry.start` refuses to open a
-//     second work session (TTM's behaviour); a break "cuts" — it closes the
+//     second work session (the original tracker's behaviour); a break "cuts" — it closes the
 //     running session and opens the break in the same call.
 
 import { z } from "zod";

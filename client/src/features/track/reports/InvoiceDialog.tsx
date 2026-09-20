@@ -2,7 +2,7 @@
  * Generate an invoice: pick a customer and a month, read what it would say, then
  * commit it.
  *
- * TTM's dialog generated and downloaded in one click. This one previews first,
+ * the original tracker's dialog generated and downloaded in one click. This one previews first,
  * because the document now carries an agent API cost that is passed through to
  * the customer, and nobody should send that to a client without seeing it.
  * Committing writes an `invoices` row and hands back a durable URL; the PDF

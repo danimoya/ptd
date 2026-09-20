@@ -16,7 +16,7 @@ const TABS = [
 ] as const;
 
 /**
- * Overview — Sprinter's dashboard, re-cut for PTD. The KPI strip stays mounted
+ * Overview — the original backlog tracker's dashboard, re-cut for PTD. The KPI strip stays mounted
  * across tabs because it is the page's masthead; each tab is a route so a filter
  * view can be linked and the browser's back button does what it looks like it does.
  */

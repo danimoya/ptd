@@ -21,7 +21,7 @@ const ROLE_NOTE: Record<Role, string> = {
   member: "Track their own time, read the board. Agents live here.",
 };
 
-/** TTM's Members page, on PTD's four-role model with agent seats called out. */
+/** the original tracker's Members page, on PTD's four-role model with agent seats called out. */
 export default function MembersTab() {
   const qc = useQueryClient();
   const { toast } = useToast();

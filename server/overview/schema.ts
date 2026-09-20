@@ -7,11 +7,11 @@ import { TASK_STATUSES } from "../../db/schema";
  * REST route and the tests can all read it without opening a connection.
  */
 
-/** Statuses that count as "still on the board". Mirrors Sprinter's open/triaged/in_progress. */
+/** Statuses that count as "still on the board". Mirrors the original backlog tracker's open/triaged/in_progress. */
 export const OPEN_STATUSES = ["backlog", "triaged", "in-progress"] as const;
 /** Statuses `next_task` will hand out — never something already being worked on. */
 export const CLAIMABLE_STATUSES = ["backlog", "triaged"] as const;
-/** Hidden unless asked for, the way Sprinter hides `rejected`. */
+/** Hidden unless asked for, the way the original backlog tracker hides `rejected`. */
 export const CLOSED_STATUSES = ["completed", "wontfix"] as const;
 
 export const SORTS = ["priority", "due", "updated", "title"] as const;

@@ -1,7 +1,7 @@
 import type { Band } from "./types";
 
 /**
- * Priority bands, straight from Sprinter: 75-100 critical, 50-74 high,
+ * Priority bands, straight from the original backlog tracker: 75-100 critical, 50-74 high,
  * 25-49 medium, 0-24 low. The one place the thresholds live on the client.
  */
 export function band(score: number): Band {

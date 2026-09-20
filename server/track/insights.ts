@@ -49,7 +49,7 @@ export interface BreakStats {
   count: number;
   minutes: number;
   avgMinutes: number;
-  /** Breaks per day on which work was logged — TTM's "break frequency". */
+  /** Breaks per day on which work was logged — the original tracker's "break frequency". */
   perActiveDay: number;
   longestMinutes: number;
 }

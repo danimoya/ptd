@@ -1,7 +1,7 @@
 /**
  * The monthly invoice, as a PDF.
  *
- * Ported from TimeTracker's response-coupled `/api/generate-invoice` handler:
+ * Ported from the original tracker's response-coupled `/api/generate-invoice` handler:
  * the editorial ledger layout survives — masthead, ruled table, vermilion
  * section labels, a monospace duration column and an italic colophon — but the
  * renderer no longer knows what an HTTP response is. `renderInvoicePdf` takes
