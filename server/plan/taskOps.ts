@@ -124,6 +124,189 @@ export function computeCriticalPath(all: Task[]): { length: number; path: Task[]
   return winner;
 }
 
+/* ───────────────────────── CPM: forward / backward pass ───────────────────────── */
+
+/**
+ * One row of the critical-path method's two passes, in real dates.
+ *
+ * `floatDays` is the slack the card has before it starts dragging the whole
+ * plan: latestStart − earliestStart. Zero float is what "on the critical path"
+ * means here, and the two are kept in lockstep on purpose — the Plan surface
+ * reads `onCriticalPath` for the vermilion outline and `floatDays` for the
+ * number at the end of the bar, and they must never disagree.
+ */
+export interface TaskSchedule {
+  taskId: number;
+  earliestStart: Date;
+  earliestFinish: Date;
+  latestStart: Date;
+  latestFinish: Date;
+  floatDays: number;
+  onCriticalPath: boolean;
+}
+
+export interface CpmSchedule {
+  /** One row per task, ordered by id. */
+  perTask: TaskSchedule[];
+  /** Earliest start in the whole plan, and the day the last card finishes. */
+  projectStart: Date;
+  projectFinish: Date;
+  spanDays: number;
+}
+
+/** A card's working length in days. An unknown or non-positive duration counts as one day. */
+export function durationDays(task: Pick<Task, "estimatedDuration">): number {
+  const days = task.estimatedDuration;
+  return typeof days === "number" && days > 0 ? days : 1;
+}
+
+/** Whole UTC days since the epoch — the integer grid both passes work on. */
+function dayNumber(date: Date): number {
+  return Math.floor(date.getTime() / MS_PER_DAY);
+}
+
+function dateOfDay(day: number): Date {
+  return new Date(day * MS_PER_DAY);
+}
+
+/**
+ * Dependency order (dependencies first) by Kahn's algorithm, ids ascending so
+ * the result is deterministic. Anything left over sits in a dependency cycle —
+ * it is appended rather than dropped, so a legacy row that predates
+ * `wouldCreateCycle` still gets a schedule instead of vanishing from the graph.
+ */
+function topoOrder(all: Task[], byId: Map<number, Task>): number[] {
+  const indegree = new Map<number, number>();
+  const dependents = new Map<number, number[]>();
+  for (const task of all) {
+    const deps = depsOf(task).filter((id) => byId.has(id) && id !== task.id);
+    indegree.set(task.id, new Set(deps).size);
+    for (const dep of new Set(deps)) {
+      const list = dependents.get(dep) ?? [];
+      list.push(task.id);
+      dependents.set(dep, list);
+    }
+  }
+  const queue = all
+    .filter((t) => (indegree.get(t.id) ?? 0) === 0)
+    .map((t) => t.id)
+    .sort((a, b) => a - b);
+  const order: number[] = [];
+  while (queue.length) {
+    const id = queue.shift()!;
+    order.push(id);
+    for (const next of dependents.get(id) ?? []) {
+      const left = (indegree.get(next) ?? 0) - 1;
+      indegree.set(next, left);
+      if (left === 0) queue.push(next);
+    }
+  }
+  if (order.length < all.length) {
+    const placed = new Set(order);
+    for (const task of [...all].sort((a, b) => a.id - b.id)) if (!placed.has(task.id)) order.push(task.id);
+  }
+  return order;
+}
+
+/**
+ * The critical-path method over the dependency DAG.
+ *
+ * Forward pass: a card cannot start before its own `startDate` (a card already
+ * scheduled keeps the day the board shows), before every dependency has
+ * finished, or — when it has no date of its own — before today; it finishes
+ * `durationDays` later. Backward pass: a card may finish no later than the
+ * earliest of its dependents' latest starts, and a card nothing waits on may
+ * run until the plan's own finish. The difference between the two is its float,
+ * and a card with none of it is on the critical path.
+ *
+ * Deliberately date-aware, which is what separates it from
+ * `computeCriticalPath` above: that one answers "how long is the longest chain
+ * of work", this one answers "which bars on this board have no slack left".
+ * Both ship in the `critical_path` response — the old fields unchanged.
+ */
+export function computeCpmSchedule(all: Task[], now = new Date()): CpmSchedule {
+  const byId = new Map(all.map((t) => [t.id, t]));
+  const today = dayNumber(now);
+  if (all.length === 0) {
+    return { perTask: [], projectStart: dateOfDay(today), projectFinish: dateOfDay(today), spanDays: 0 };
+  }
+
+  const order = topoOrder(all, byId);
+  const dependents = new Map<number, number[]>();
+  for (const task of all) {
+    for (const dep of depsOf(task)) {
+      if (!byId.has(dep) || dep === task.id) continue;
+      const list = dependents.get(dep) ?? [];
+      if (!list.includes(task.id)) list.push(task.id);
+      dependents.set(dep, list);
+    }
+  }
+
+  const earliestStart = new Map<number, number>();
+  const earliestFinish = new Map<number, number>();
+  for (const id of order) {
+    const task = byId.get(id)!;
+    // An anchored card holds its own start, even when that is in the past; an
+    // undated one is pulled forward to today and then pushed by its deps.
+    let start = task.startDate ? dayNumber(new Date(task.startDate)) : today;
+    for (const dep of depsOf(task)) {
+      const finish = earliestFinish.get(dep);
+      // `undefined` only happens inside a cycle, where there is no honest answer.
+      if (finish !== undefined && finish > start) start = finish;
+    }
+    earliestStart.set(id, start);
+    earliestFinish.set(id, start + durationDays(task));
+  }
+
+  const projectFinish = Math.max(...all.map((t) => earliestFinish.get(t.id) ?? today));
+  const projectStart = Math.min(...all.map((t) => earliestStart.get(t.id) ?? today));
+
+  const latestStart = new Map<number, number>();
+  const latestFinish = new Map<number, number>();
+  for (let i = order.length - 1; i >= 0; i--) {
+    const id = order[i];
+    const task = byId.get(id)!;
+    const successors = dependents.get(id) ?? [];
+    let finish = projectFinish;
+    for (const successor of successors) {
+      const start = latestStart.get(successor);
+      if (start !== undefined && start < finish) finish = start;
+    }
+    // Never earlier than the card's own earliest finish: float stays >= 0 even
+    // for a row reached through a cycle.
+    const own = earliestFinish.get(id) ?? projectFinish;
+    if (finish < own) finish = own;
+    latestFinish.set(id, finish);
+    latestStart.set(id, finish - durationDays(task));
+  }
+
+  const perTask = [...all]
+    .sort((a, b) => a.id - b.id)
+    .map((task) => {
+      const es = earliestStart.get(task.id) ?? today;
+      const ef = earliestFinish.get(task.id) ?? today;
+      const lf = latestFinish.get(task.id) ?? ef;
+      const ls = latestStart.get(task.id) ?? es;
+      const slack = ls - es;
+      return {
+        taskId: task.id,
+        earliestStart: dateOfDay(es),
+        earliestFinish: dateOfDay(ef),
+        latestStart: dateOfDay(ls),
+        latestFinish: dateOfDay(lf),
+        floatDays: slack,
+        onCriticalPath: slack === 0,
+      };
+    });
+
+  return {
+    perTask,
+    projectStart: dateOfDay(projectStart),
+    projectFinish: dateOfDay(projectFinish),
+    spanDays: projectFinish - projectStart,
+  };
+}
+
 /**
  * the original board's status rule: a card with a startDate belongs on the timeline, a
  * card without one belongs in the backlog. An explicit status from the caller

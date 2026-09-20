@@ -13,6 +13,7 @@ import {
   assertDependencies,
   assertStream,
   canComplete,
+  computeCpmSchedule,
   computeCriticalPath,
   deriveStatus,
   depsOf,
@@ -785,14 +786,35 @@ defineAction({
   name: "critical_path",
   title: "Critical path",
   description:
-    "The longest dependency chain in the organization weighted by estimated duration. Its length is the earliest the whole plan can finish; shortening anything else does not help.",
+    "The longest dependency chain in the organization weighted by estimated duration (totalDays/tasks), plus a full critical-path-method schedule in perTask: earliest/latest start and finish for every card, its float in days, and whether it has none left. Float is the slack a card has before it drags the whole plan; zero float is the critical path the Plan surface outlines in red.",
   input: z.object({}),
   requiredRole: "manager",
   surface: "plan",
   handler: async (_args, ctx) => {
     const all = await fetchOrgTasks(ctx.orgId);
+    // Two readings of "critical", both shipped: the longest chain of work
+    // (unchanged, what this action has always returned) and the date-aware CPM
+    // passes the board draws. The client must never recompute either itself —
+    // that is how the Timeline and the Cascade graph ended up able to disagree.
     const { length, path } = computeCriticalPath(all);
-    return { totalDays: length, taskCount: path.length, tasks: path.map(serializeTask) };
+    const schedule = computeCpmSchedule(all);
+    return {
+      totalDays: length,
+      taskCount: path.length,
+      tasks: path.map(serializeTask),
+      projectStart: isoOrNull(schedule.projectStart),
+      projectFinish: isoOrNull(schedule.projectFinish),
+      spanDays: schedule.spanDays,
+      perTask: schedule.perTask.map((row) => ({
+        taskId: row.taskId,
+        earliestStart: isoOrNull(row.earliestStart),
+        earliestFinish: isoOrNull(row.earliestFinish),
+        latestStart: isoOrNull(row.latestStart),
+        latestFinish: isoOrNull(row.latestFinish),
+        floatDays: row.floatDays,
+        onCriticalPath: row.onCriticalPath,
+      })),
+    };
   },
 });
 

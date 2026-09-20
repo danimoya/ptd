@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { format } from "date-fns";
-import { AlertTriangle, Bot, ChevronDown, ChevronRight, CornerDownRight, GitBranch, Layers, Package, Play, RotateCcw, User as UserIcon } from "lucide-react";
+import { AlertTriangle, Bot, ChevronDown, ChevronRight, CornerDownRight, GitBranch, Layers, ListTree, Network, Package, Play, RotateCcw, Rows3, User as UserIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { LucideIcon } from "lucide-react";
 import type { MemberRow } from "@/lib/api";
 import {
   buildForest,
@@ -20,10 +21,16 @@ import {
   type CascadeNode,
   type SlipRow,
 } from "./logic";
-import type { CascadeGroup, CascadeOrder, PlanApp, PlanStream, PlanTask } from "./types";
+import { DependencyGraph } from "./DependencyGraph";
+import { buildCpIndex } from "./criticalPath";
+import { useCriticalPath } from "./api";
+import { usePersistentFlag, usePersistentState } from "./usePersistentState";
+import type { CascadeGroup, CascadeOrder, CascadeRender, PlanApp, PlanStream, PlanTask } from "./types";
 
 const ORDERS: CascadeOrder[] = ["priority_score", "due_date", "start_date", "float"];
 const GROUPS: CascadeGroup[] = ["stream", "app", "assignee", "source"];
+const RENDERS = ["tree", "graph"] as const;
+const RENDER_LABELS: Record<CascadeRender, string> = { tree: "Tree", graph: "Graph" };
 const INDENT = 18;
 
 interface CascadeViewProps {
@@ -55,8 +62,17 @@ export function CascadeView({ tasks, streams, apps, members, order, onOrderChang
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [slipRoot, setSlipRoot] = useState<number | null>(null);
   const [slipDays, setSlipDays] = useState("5");
+  /** Tree or graph — the same data, two readings, remembered per browser. */
+  const [render, setRender] = usePersistentState<CascadeRender>("ptd.plan.cascade.render", "tree", RENDERS);
+  /** Graph only: whether the Group by choice becomes horizontal bands. */
+  const [bands, setBands] = usePersistentFlag("ptd.plan.cascade.bands", true);
 
-  const open = tasks.filter((t) => !t.completed);
+  // The graph asks the server for the critical path; the tree has no use for it,
+  // so the query stays parked until the graph is actually on screen.
+  const criticalQuery = useCriticalPath(render === "graph");
+  const critical = useMemo(() => buildCpIndex(criticalQuery.data), [criticalQuery.data]);
+
+  const open = useMemo(() => tasks.filter((t) => !t.completed), [tasks]);
   const ctx = useMemo(() => ({ streams, apps, members }), [streams, apps, members]);
   const forest = useMemo(() => buildForest(open), [open]);
   const rootGroups = useMemo(
@@ -85,8 +101,36 @@ export function CascadeView({ tasks, streams, apps, members, order, onOrderChang
     <div className="flex h-full flex-col">
       {/* ─────────── controls ─────────── */}
       <div className="flex flex-wrap items-end gap-x-6 gap-y-3 px-4 py-3 rule-b">
+        <Segmented
+          label="Show"
+          options={[...RENDERS]}
+          value={render}
+          labels={RENDER_LABELS}
+          onChange={setRender}
+          icons={{ tree: ListTree, graph: Network }}
+          testId="cascade-render"
+        />
         <Segmented label="Order by" options={ORDERS} value={order} labels={ORDER_LABELS} onChange={onOrderChange} />
         <Segmented label="Group by" options={GROUPS} value={group} labels={GROUP_LABELS} onChange={onGroupChange} />
+        {render === "graph" && (
+          <div>
+            <div className="eyebrow mb-1.5">Bands</div>
+            <button
+              type="button"
+              onClick={() => setBands(!bands)}
+              aria-pressed={bands}
+              title={bands ? `Grouped into ${GROUP_LABELS[group].toLowerCase()} bands — click for the plain graph` : "Group the graph into bands"}
+              data-testid="cascade-graph-bands"
+              className={cn(
+                "eyebrow flex h-7 items-center gap-1.5 border border-rule px-2.5 transition-colors focus-ink",
+                bands ? "bg-ink !text-parchment" : "hover:bg-parchment-deep"
+              )}
+            >
+              <Rows3 className="h-3 w-3" />
+              {bands ? GROUP_LABELS[group] : "Off"}
+            </button>
+          </div>
+        )}
 
         <div className="ml-auto flex items-end gap-2">
           <div>
@@ -133,6 +177,62 @@ export function CascadeView({ tasks, streams, apps, members, order, onOrderChang
         </div>
       </div>
 
+      {render === "graph" ? (
+        <DependencyGraph
+          tasks={open}
+          streams={streams}
+          apps={apps}
+          members={members}
+          order={order}
+          group={bands ? group : null}
+          slip={slip}
+          critical={critical}
+          onOpen={onOpen}
+        />
+      ) : (
+        <TreeRendering
+          open={open}
+          rootGroups={rootGroups}
+          nodeByTaskId={nodeByTaskId}
+          collapsed={collapsed}
+          toggle={toggle}
+          order={order}
+          group={group}
+          ctx={ctx}
+          slip={slip}
+          onOpen={onOpen}
+        />
+      )}
+    </div>
+  );
+}
+
+/** The original indented dependency tree, lifted out so Cascade can swap renderings. */
+function TreeRendering({
+  open,
+  rootGroups,
+  nodeByTaskId,
+  collapsed,
+  toggle,
+  order,
+  group,
+  ctx,
+  slip,
+  onOpen,
+}: {
+  open: PlanTask[];
+  rootGroups: { key: string; label: string; tasks: PlanTask[] }[];
+  nodeByTaskId: Map<number, CascadeNode>;
+  collapsed: Set<string>;
+  toggle: (path: string) => void;
+  order: CascadeOrder;
+  group: CascadeGroup;
+  ctx: { streams: PlanStream[]; apps: PlanApp[]; members: MemberRow[] };
+  slip: Map<number, SlipRow>;
+  onOpen: (task: PlanTask) => void;
+}) {
+  return (
+    <>
       {/* ─────────── column header ─────────── */}
       <div className="grid grid-cols-[1fr_92px_92px_64px_52px] items-baseline gap-2 bg-parchment-deep/50 px-4 py-1.5 rule-b">
         <span className="eyebrow">Card</span>
@@ -177,7 +277,7 @@ export function CascadeView({ tasks, streams, apps, members, order, onOrderChang
           </section>
         ))}
       </div>
-    </div>
+    </>
   );
 }
 
@@ -323,32 +423,43 @@ function Segmented<T extends string>({
   options,
   value,
   labels,
+  icons,
+  testId,
   onChange,
 }: {
   label: string;
   options: T[];
   value: T;
   labels: Record<T, string>;
+  /** Optional glyph per option — used by the Tree/Graph switch. */
+  icons?: Record<string, LucideIcon>;
+  testId?: string;
   onChange: (value: T) => void;
 }) {
   return (
     <div>
       <div className="eyebrow mb-1.5">{label}</div>
       <div className="flex items-center border border-rule">
-        {options.map((option, index) => (
-          <button
-            key={option}
-            type="button"
-            onClick={() => onChange(option)}
-            className={cn(
-              "eyebrow h-7 px-2.5 transition-colors focus-ink",
-              index > 0 && "border-l border-rule",
-              value === option ? "bg-ink !text-parchment" : "hover:bg-parchment-deep"
-            )}
-          >
-            {labels[option]}
-          </button>
-        ))}
+        {options.map((option, index) => {
+          const Icon: LucideIcon | undefined = icons?.[option];
+          return (
+            <button
+              key={option}
+              type="button"
+              onClick={() => onChange(option)}
+              aria-pressed={value === option}
+              data-testid={testId ? `${testId}-${option}` : undefined}
+              className={cn(
+                "eyebrow flex h-7 items-center gap-1.5 px-2.5 transition-colors focus-ink",
+                index > 0 && "border-l border-rule",
+                value === option ? "bg-ink !text-parchment" : "hover:bg-parchment-deep"
+              )}
+            >
+              {Icon && <Icon className="h-3 w-3" />}
+              {labels[option]}
+            </button>
+          );
+        })}
       </div>
     </div>
   );

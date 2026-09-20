@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { addDays, differenceInDays, eachDayOfInterval, endOfMonth, format, isSameDay, isWeekend, startOfMonth } from "date-fns";
-import { CalendarDays, ChevronLeft, ChevronRight, GanttChartSquare, Layers, Users } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, GanttChartSquare, Layers, Route, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { MemberRow } from "@/lib/api";
 import { TaskCard } from "./TaskCard";
 import { buildLanes, dayOf, packSlots, tasksInWindow } from "./logic";
+import { buildCpIndex, floatExplainer, type CpIndex } from "./criticalPath";
+import { useCriticalPath } from "./api";
+import { usePersistentFlag } from "./usePersistentState";
 import type { GroupBy, PlanApp, PlanStream, PlanTask } from "./types";
 
 /** The narrowest a day column is ever drawn — the base unit drags snap to. */
@@ -107,6 +110,18 @@ export function Timeline({
   const visible = useMemo(() => tasksInWindow(tasks.filter((t) => !t.completed), monthStart, monthEnd), [tasks, monthStart.getTime(), monthEnd.getTime()]);
   const lanes = useMemo(() => buildLanes(visible, groupBy, streams, members.map((m) => ({ userId: m.userId, displayName: m.displayName, isAgent: m.isAgent }))), [visible, groupBy, streams, members]);
 
+  /**
+   * The critical-path overlay: the chain in vermilion, and the float of every
+   * bar at its end. Both come from the server's CPM pass (`critical_path`) —
+   * the board must not invent a second set of numbers. Off by default and the
+   * query only runs while it is on, so a member who cannot call the action
+   * (manager+) never trips over a 403 they did not ask for.
+   */
+  const [showCriticalPath, setShowCriticalPath] = usePersistentFlag("ptd.plan.timeline.criticalPath", false);
+  const criticalQuery = useCriticalPath(showCriticalPath);
+  const critical = useMemo(() => buildCpIndex(criticalQuery.data), [criticalQuery.data]);
+  const criticalOn = showCriticalPath && critical.ready;
+
   return (
     <div className="flex h-full min-h-[380px] flex-col">
       {/* ─────────── toolbar ─────────── */}
@@ -130,7 +145,32 @@ export function Timeline({
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {showCriticalPath && criticalQuery.isError && (
+            <span className="eyebrow !text-vermilion" title={(criticalQuery.error as Error | null)?.message ?? undefined}>
+              critical path needs manager access
+            </span>
+          )}
+          {criticalOn && (
+            <span className="eyebrow hidden md:inline" title={`Longest chain: ${critical.totalDays} day(s) of work`}>
+              {critical.count} on the path
+              {critical.projectFinish ? ` · ends ${format(dayOf(critical.projectFinish)!, "dd MMM")}` : ""}
+            </span>
+          )}
+          <button
+            onClick={() => setShowCriticalPath(!showCriticalPath)}
+            aria-pressed={showCriticalPath}
+            data-testid="timeline-critical-path"
+            title="Outline the critical path and show every bar's float (slack days)"
+            className={cn(
+              "eyebrow flex h-7 items-center gap-1.5 border border-rule px-2.5 transition-colors focus-ink",
+              showCriticalPath ? "border-vermilion bg-vermilion !text-parchment" : "hover:bg-parchment-deep"
+            )}
+          >
+            <Route className="h-3 w-3" />
+            <span className="hidden sm:inline">Critical path</span>
+            <span className="sm:hidden">CP</span>
+          </button>
           <span className="eyebrow hidden sm:inline">Lanes</span>
           <div className="flex items-center border border-rule">
             <button
@@ -226,6 +266,8 @@ export function Timeline({
                       allTasks={tasks}
                       barDrag={barDrag}
                       dropHint={dropHint?.laneKey === lane.key ? dropHint : null}
+                      critical={critical}
+                      showCriticalPath={criticalOn}
                       onOpen={onOpen}
                       onComplete={onComplete}
                     />
@@ -253,6 +295,8 @@ function LaneCanvas({
   allTasks,
   barDrag,
   dropHint,
+  critical,
+  showCriticalPath,
   onOpen,
   onComplete,
 }: {
@@ -268,6 +312,9 @@ function LaneCanvas({
   allTasks: PlanTask[];
   barDrag: BarDrag | null;
   dropHint: DropHint | null;
+  critical: CpIndex;
+  /** The overlay is on AND the server answered — both, or nothing is drawn. */
+  showCriticalPath: boolean;
   onOpen: (task: PlanTask) => void;
   onComplete: (task: PlanTask) => void;
 }) {
@@ -275,13 +322,14 @@ function LaneCanvas({
     id: `lane-${lane.key}`,
     data: { kind: "lane", laneKey: lane.key, streamId: lane.streamId, assigneeId: lane.assigneeId },
   });
+  const canvasWidth = days.length * dayWidth;
 
   return (
     <div
       ref={setNodeRef}
       className={cn("relative transition-colors", isOver && "bg-vermilion/5")}
       style={{
-        width: days.length * dayWidth,
+        width: canvasWidth,
         minHeight: height,
         backgroundImage: "linear-gradient(to right, hsl(var(--rule)) 1px, transparent 1px)",
         backgroundSize: `${dayWidth}px 100%`,
@@ -324,18 +372,29 @@ function LaneCanvas({
           return differenceInDays(addDays(depStart, dep?.estimatedDuration ?? 0), start) === 0;
         });
         const indent = abuts ? Math.round(dayWidth / 4) : 0;
+        const barLeft = startOffset * dayWidth + 2 + indent;
+        const barWidth = Math.max(dayWidth - 4, duration * dayWidth - 4 - indent);
+        const barTop = slot * (ROW_HEIGHT + ROW_GAP) + 7;
+        const onCriticalPath = showCriticalPath && critical.onPath(task.id);
+        const slack = showCriticalPath ? critical.floatOf(task.id) : null;
+        // The float number sits in the gutter after the bar — past the due-date
+        // diamond when there is one, since a bar that ends on its due date puts
+        // the two in the same spot. A bar that runs to the edge of the month
+        // keeps its number just inside, so nothing widens the canvas and the
+        // month's scroll width stays exactly one month.
+        const markerLeft = dueInRange ? dueOffset! * dayWidth + dayWidth / 2 - 6 : null;
+        const afterBar = barLeft + barWidth + 4;
+        const floatLeft = Math.min(
+          markerLeft !== null && afterBar < markerLeft + 14 ? markerLeft + 17 : afterBar,
+          canvasWidth - 28
+        );
 
         return (
           <div key={task.id}>
             <DraggableBar
               taskId={task.id}
               liveDays={barDrag?.taskId === task.id ? barDrag.days : 0}
-              style={{
-                left: startOffset * dayWidth + 2 + indent,
-                width: Math.max(dayWidth - 4, duration * dayWidth - 4 - indent),
-                top: slot * (ROW_HEIGHT + ROW_GAP) + 7,
-                height: ROW_HEIGHT,
-              }}
+              style={{ left: barLeft, width: barWidth, top: barTop, height: ROW_HEIGHT }}
             >
               <TaskCard
                 task={task}
@@ -345,8 +404,34 @@ function LaneCanvas({
                 assignee={members.find((m) => m.userId === task.assignedTo) ?? null}
                 onOpen={onOpen}
                 onComplete={onComplete}
+                className={onCriticalPath ? "!border-vermilion" : undefined}
               />
+              {onCriticalPath && (
+                <>
+                  <span aria-hidden className="pointer-events-none absolute bottom-0 left-0 top-0 z-10 w-[3px] bg-vermilion" />
+                  <span className="pointer-events-none absolute right-0 top-0 z-10 border-b border-l border-vermilion bg-card px-1 font-mono text-[8px] uppercase leading-[11px] tracking-wider2 text-vermilion">
+                    CP
+                  </span>
+                </>
+              )}
             </DraggableBar>
+            {showCriticalPath && slack !== null && (
+              <div
+                className="absolute z-10 flex cursor-default items-center"
+                style={{ left: floatLeft, top: barTop, height: ROW_HEIGHT }}
+                title={floatExplainer(slack)}
+                data-testid={`bar-float-${task.id}`}
+              >
+                <span
+                  className={cn(
+                    "font-mono text-[10px] tabular-nums",
+                    slack === 0 ? "font-semibold text-vermilion" : "text-ink-muted/90"
+                  )}
+                >
+                  {slack === 0 ? "0d" : `+${slack}d`}
+                </span>
+              </div>
+            )}
             {dueInRange && (
               <div
                 aria-hidden

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { callAction, getMembers, type MemberRow } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
-import type { PlanApp, PlanTask, StreamListResponse, TaskHistoryEvent, TaskTotals } from "./types";
+import type { CriticalPathResponse, PlanApp, PlanTask, StreamListResponse, TaskHistoryEvent, TaskTotals } from "./types";
 
 /**
  * Data layer for the Plan surface. Everything goes through `callAction` (the
@@ -17,6 +17,7 @@ export const planKeys = {
   streams: ["plan", "streams"] as const,
   apps: ["plan", "apps"] as const,
   members: ["plan", "members"] as const,
+  criticalPath: ["plan", "criticalPath"] as const,
   history: (taskId: number) => ["plan", "history", taskId] as const,
   totals: (taskId: number) => ["plan", "totals", taskId] as const,
 };
@@ -61,6 +62,25 @@ export function usePlanApps() {
 
 export function usePlanMembers() {
   return useQuery<MemberRow[]>({ queryKey: planKeys.members, queryFn: getMembers });
+}
+
+/**
+ * The org's critical path and the CPM float of every card, from the server.
+ *
+ * Deliberately not derived on the client: the Timeline's float numbers, the
+ * Cascade graph's red chain and an agent asking `critical_path` over MCP have to
+ * be the same numbers. `critical_path` is a manager+ action, so a member gets a
+ * 403 — hence `retry: false` and callers that treat "no data" as "no overlay"
+ * rather than an error worth shouting about.
+ */
+export function useCriticalPath(enabled: boolean) {
+  return useQuery<CriticalPathResponse>({
+    queryKey: planKeys.criticalPath,
+    queryFn: () => callAction<CriticalPathResponse>("critical_path", {}),
+    enabled,
+    retry: false,
+    staleTime: 15_000,
+  });
 }
 
 export function useTaskHistory(taskId: number | null, enabled: boolean) {

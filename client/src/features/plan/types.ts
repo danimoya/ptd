@@ -98,3 +98,29 @@ export type ViewMode = "board" | "timeline" | "cascade";
 export type GroupBy = "stream" | "assignee";
 export type CascadeOrder = "priority_score" | "due_date" | "start_date" | "float";
 export type CascadeGroup = "stream" | "app" | "assignee" | "source";
+/** Cascade mode draws the same graph two ways; the choice is remembered. */
+export type CascadeRender = "tree" | "graph";
+
+/** One row of `critical_path`'s CPM schedule, as the wire carries it. */
+export interface CriticalPathEntry {
+  taskId: number;
+  earliestStart: string | null;
+  earliestFinish: string | null;
+  latestStart: string | null;
+  latestFinish: string | null;
+  /** Slack in days: latestStart − earliestStart. Zero means critical. */
+  floatDays: number;
+  onCriticalPath: boolean;
+}
+
+export interface CriticalPathResponse {
+  /** Longest chain by estimated duration — the action's original reading. */
+  totalDays: number;
+  taskCount: number;
+  tasks: PlanTask[];
+  /** The forward/backward pass. Absent on a server older than the CPM change. */
+  perTask?: CriticalPathEntry[];
+  projectStart?: string | null;
+  projectFinish?: string | null;
+  spanDays?: number;
+}
