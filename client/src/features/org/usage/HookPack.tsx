@@ -1,3 +1,4 @@
+import React from "react";
 import { Terminal } from "lucide-react";
 import CopyBlock from "../CopyBlock";
 import { Hint } from "../Hint";

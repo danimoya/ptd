@@ -78,6 +78,7 @@ defineAction({
     "Point the bot at this deployment with `setWebhook`, and switch Telegram on for this organization. The URL carries a secret derived from PTD_SECRET_KEY and the bot token, so it is unguessable and rotates with either of them. One bot serves every organization on this server: registering it again from another organization is harmless and simply re-points the same bot here.",
   input: z.object({}),
   requiredRole: "admin",
+  audited: true,
   surface: "org",
   handler: async (_args, ctx) => {
     if (!isTelegramConfigured()) {
@@ -159,6 +160,7 @@ defineAction({
   description: "Forget every Telegram identity bound to the calling PTD user. Their commands stop working until they link again.",
   input: z.object({}),
   requiredRole: "member",
+  audited: true,
   surface: "org",
   handler: async (_args, ctx) => ({ removed: await removeTelegramIdentitiesForUser(ctx.userId) }),
 });
@@ -175,6 +177,7 @@ defineAction({
       .describe("Also unregister the webhook with Telegram. This affects EVERY organization on this server."),
   }),
   requiredRole: "admin",
+  audited: true,
   surface: "org",
   handler: async (args, ctx) => {
     const removed = await removeTelegramForOrg(ctx.orgId);

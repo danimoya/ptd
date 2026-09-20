@@ -126,6 +126,7 @@ defineAction({
     direction: z.enum(DIRECTIONS).default("both").describe("both = mirror each way, in = GitHub → PTD only, out = PTD → GitHub only"),
   }),
   requiredRole: "admin",
+  audited: true,
   surface: "org",
   handler: async (args, ctx) => {
     const row = await requireInstall(ctx.orgId);
@@ -168,6 +169,7 @@ defineAction({
     "Stop syncing one stream. Existing cards keep their `gh:owner/name#N` externalKey and their history; nothing is deleted on either side, and mapping the stream again picks the same cards back up.",
   input: z.object({ streamId: z.number().int().positive() }),
   requiredRole: "admin",
+  audited: true,
   surface: "org",
   handler: async (args, ctx) => {
     await requireInstall(ctx.orgId);
@@ -217,6 +219,7 @@ defineAction({
     "Forget the installation and every mapping. Cards keep their externalKey and history, and the App itself stays installed on GitHub until someone removes it there — this only stops PTD acting on it.",
   input: z.object({}),
   requiredRole: "admin",
+  audited: true,
   surface: "org",
   handler: async (_args, ctx) => {
     const row = await getGithubForOrg(ctx.orgId);

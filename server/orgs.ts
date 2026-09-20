@@ -57,8 +57,11 @@ export async function resolveOrg(req: Request, res: Response, next: NextFunction
     return res.status(403).json({
       error: "totp_required",
       message:
-        "This organization requires two-factor authentication. Set it up under Org → Security (or /api/auth/totp/setup) and sign in again.",
-      setupPath: "/org/security",
+        "This organization requires two-factor authentication. Set it up at /auth?setup=2fa (or POST /api/auth/totp/setup) and you are back in.",
+      // Not the Org tab: that surface is admin-only and its own data is refused
+      // by this very rule. The setup page hangs off the sign-in page instead, so
+      // it works for every role and needs nothing from the organization.
+      setupPath: "/auth?setup=2fa",
     });
   }
   next();

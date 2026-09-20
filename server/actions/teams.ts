@@ -71,6 +71,7 @@ defineAction({
     teamName: z.string().max(200).optional().describe("Which Teams team this is, for the Org UI"),
   }),
   requiredRole: "admin",
+  audited: true,
   surface: "org",
   handler: async (args, ctx) => {
     const secret = args.secret.trim();
@@ -135,6 +136,7 @@ defineAction({
     "Destroy the stored secret: `@PTD …` commands from that team stop being recognised. Members keep their link records, so re-connecting a new Outgoing Webhook picks up where it left off. Delete the webhook in Teams too, or it will keep posting to a URL that now refuses it.",
   input: z.object({}),
   requiredRole: "admin",
+  audited: true,
   surface: "org",
   handler: async (_args, ctx) => {
     const removed = await removeTeamsForOrg(ctx.orgId);

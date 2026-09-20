@@ -108,6 +108,7 @@ defineAction({
     channelId: z.string().min(1).max(64).describe("Slack conversation id, e.g. C0123456789 (Slack → channel → About → copy channel ID)."),
   }),
   requiredRole: "admin",
+  audited: true,
   surface: "org",
   handler: async (args, ctx) => {
     await requireInstall(ctx.orgId);
@@ -156,6 +157,7 @@ defineAction({
     "Remove the workspace install: the sealed bot token is destroyed, notifications stop and slash commands from that workspace stop resolving. Members' link records are left alone, so a re-install picks up where it left off.",
   input: z.object({}),
   requiredRole: "admin",
+  audited: true,
   surface: "org",
   handler: async (_args, ctx) => {
     const removed = await removeSlackForOrg(ctx.orgId);

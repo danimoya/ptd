@@ -212,6 +212,7 @@ defineAction({
     ),
   }),
   requiredRole: "admin",
+  audited: true,
   surface: "org",
   handler: async (args, ctx) => createWebhook(ctx.orgId, ctx.userId, args),
 });
@@ -222,6 +223,7 @@ defineAction({
   description: "Remove a webhook subscription. Deliveries stop immediately.",
   input: z.object({ id: z.number().int().positive().describe("Webhook id, from webhook.list.") }),
   requiredRole: "admin",
+  audited: true,
   surface: "org",
   handler: async (args, ctx) => deleteWebhook(ctx.orgId, args.id),
 });

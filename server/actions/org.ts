@@ -23,6 +23,7 @@ defineAction({
     invitationId: z.number().int().positive().describe("Invitation id, from GET /api/orgs/current/invitations."),
   }),
   requiredRole: "admin",
+  audited: true,
   surface: "org",
   handler: async (args, ctx) => {
     const [invite] = await db

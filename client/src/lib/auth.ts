@@ -74,7 +74,34 @@ function isProbeRequest(input: RequestInfo | URL): boolean {
 }
 
 /**
- * Global fetch wrapper: clears the token and redirects on 401.
+ * Where a member is sent when their organization requires a second factor.
+ *
+ * The sign-in page, not the Org tab: /org is admin-only, and everything it reads
+ * is refused by the very rule that sent them there. This page needs nothing but
+ * the account surface, so it works for every role.
+ */
+export const SECURITY_SETUP_PATH = "/auth?setup=2fa";
+
+/**
+ * A 403 the app can act on rather than report: the organization requires 2FA and
+ * this account does not have it. The session is perfectly valid — every
+ * account-scoped call still works — so the token is *not* cleared; the person is
+ * taken to the page that fixes it. Already being on that page is left alone —
+ * anything else would reload it forever.
+ */
+async function isTotpRequired(res: Response): Promise<boolean> {
+  if (res.status !== 403) return false;
+  try {
+    const body = (await res.clone().json()) as { error?: string };
+    return body?.error === "totp_required";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Global fetch wrapper: clears the token and redirects on 401, and steers a
+ * `totp_required` 403 to the setup page.
  * Wrap `window.fetch` once at boot so every API call benefits.
  */
 export function installAuthInterceptor() {
@@ -90,6 +117,11 @@ export function installAuthInterceptor() {
           window.location.href = "/auth";
         }
       }
+      return res;
+    }
+    const here = `${window.location.pathname}${window.location.search}`;
+    if (localStorage.getItem("token") && here !== SECURITY_SETUP_PATH && (await isTotpRequired(res))) {
+      window.location.href = SECURITY_SETUP_PATH;
     }
     return res;
   };

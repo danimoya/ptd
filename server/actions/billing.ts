@@ -105,6 +105,7 @@ defineAction({
     "Create a Stripe Checkout Session for the flat $15/month organization subscription and return its URL for the browser to follow. Owner only.",
   input: z.object({}),
   requiredRole: "owner",
+  audited: true,
   surface: "org",
   handler: async (_args, ctx) => {
     if (!isHosted()) return OFF;
@@ -137,6 +138,7 @@ defineAction({
     "Create a Stripe Customer Portal session — card, invoices, cancellation — and return its URL. Owner only; requires an existing Stripe customer.",
   input: z.object({}),
   requiredRole: "owner",
+  audited: true,
   surface: "org",
   handler: async (_args, ctx) => {
     if (!isHosted()) return OFF;

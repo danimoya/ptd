@@ -11,6 +11,11 @@ not try to do.
 | Session token | JWT signed with `JWT_SECRET` | 7 days |
 | API token (`ptd_…`) | scrypt hash (64-byte key, per-token 16-byte salt) | Until revoked, or its optional expiry |
 | OAuth authorization code / refresh token | Hashed, single-use code | Short-lived code, revocable refresh token |
+| TOTP secret | AES-256-GCM under `PTD_SECRET_KEY` | Until 2FA is turned off |
+| Recovery codes | AES-256-GCM under `PTD_SECRET_KEY`, rewritten without the code that was spent | Single use each; ten at a time |
+| Pre-auth token (between a password and a code) | JWT with `purpose: "mfa"`, never accepted as a session | 5 minutes |
+| OIDC hand-off code | In memory, single use | 2 minutes |
+| Export download token | In memory, single use, bound to one organization and one user | 5 minutes |
 
 An API token is `ptd_` + an 8-character hex **prefix** + a 32-character hex
 **secret**. Only the prefix is stored in the clear — it is what the lookup is keyed
@@ -62,6 +67,129 @@ Keep `.env` out of version control and back it up encrypted, separately from the
 data. Losing `DB_ENCRYPTION_KEY` loses the data; losing `PTD_SECRET_KEY` means every
 stored integration secret must be re-entered.
 
+## Second factor (TOTP)
+
+Optional per account, and requirable per organization.
+
+- **RFC 6238**, HMAC-SHA1 over a 160-bit secret, 30-second steps, six digits, ±1
+  step accepted for clock drift. No dependency: it is `crypto` and forty lines.
+  Any authenticator app works — there is nothing PTD-specific in the QR code,
+  which the server draws itself as an SVG.
+- **Enrolment is two steps.** `POST /api/auth/totp/setup` stores the sealed secret
+  with 2FA still *off*; only `POST /api/auth/totp/verify`, with a code the app
+  actually produced, turns it on. A half-finished enrolment locks nobody out.
+- **Sign-in becomes two calls.** `POST /api/auth/login` answers
+  `{ mfaRequired: true, preAuthToken }` — a five-minute, purpose-scoped JWT that
+  the session verifier refuses — and `POST /api/auth/totp/login` trades it plus a
+  code (or one recovery code) for the real session. Five wrong codes in five
+  minutes and that account's step-up stops answering, whatever the IP.
+- **Ten recovery codes**, shown once, sealed at rest, each good once: spending one
+  rewrites the stored list without it. `POST /api/auth/totp/recovery-codes`
+  replaces the set, and turning 2FA off needs a live code or a recovery code, so a
+  borrowed session cannot quietly remove the second factor.
+- **A provider sign-in honours it too**: the callback hands back the same 2FA
+  challenge rather than a session.
+
+### Requiring it
+
+`org.set_security { requireTotp: true }` (admin) makes it mandatory. Then every
+org-scoped request from a human without 2FA answers:
+
+```json
+403 { "error": "totp_required", "setupPath": "/auth?setup=2fa" }
+```
+
+Three deliberate details:
+
+- The action **refuses unless the caller already has 2FA**, so it cannot lock out
+  the person who turned it on.
+- **Agent seats are exempt.** An agent cannot hold a phone; its credential is a
+  `ptd_` token an admin mints and revokes. The test is `users.is_agent`, not the
+  authentication path, so a *human's* API token is not exempt and the CLI is not a
+  way around the policy.
+- **The account surface `/api/auth/**` is outside the organization scope**, and the
+  setup page hangs off `/auth`, not off the Org tab — which is admin-only and
+  whose own data this rule refuses. Whoever is refused can always reach the page
+  that fixes it.
+
+## Signing in with a provider (OIDC)
+
+Google, GitHub and Microsoft, each present only when its client id *and* secret are
+configured — an unconfigured provider is not advertised and its start route 404s.
+
+```
+GET  /api/auth/providers                which are configured
+GET  /api/auth/oidc/:provider/start     → the provider, with signed state + PKCE
+GET  /api/auth/oidc/:provider/callback  ← the provider, → /auth?oidc=<code>
+POST /api/auth/oidc/exchange            the code for the session token
+```
+
+- **No token in a URL.** The callback can only redirect, and a JWT in a redirect
+  lands in browser history, the proxy's access log and the next page's `Referer`.
+  So it redirects with a two-minute single-use code, which the SPA posts back.
+- **State is signed** (HMAC-SHA256 over `{nonce, redirectTo, inviteToken}`) and its
+  nonce is single-use, so it cannot be replayed or forged. `redirectTo` is only
+  ever a path inside PTD — an open redirector on the sign-in page is a phishing
+  primitive.
+- **PKCE `S256`** for the providers that support it; the verifier is kept
+  server-side, keyed by the nonce, so it never travels with its own challenge.
+  GitHub's OAuth app endpoints ignore PKCE, so it is not claimed there.
+- **Identity is `(provider, subject)`**, not the address: a renamed GitHub login or
+  a changed work address is still the same person.
+- **Linking needs a verified address.** An unverified one would let anyone who can
+  create an account at a provider take over a PTD account by typing someone else's
+  address into it. Microsoft Graph exposes no verification flag — an address a
+  tenant or Microsoft itself issued is treated as verified; GitHub's comes from
+  `/user/emails` and must be `primary` and `verified`.
+- **A new account gets a random password** (32 bytes, bcrypt) that nobody knows.
+  "Forgot password" is how it ever becomes usable, which is also why unlinking the
+  last provider asks for confirmation.
+- The ID token is deliberately **not** trusted for identity: the profile is read
+  from the userinfo endpoint over TLS with the access token, so there is no JWKS to
+  fetch, cache, rotate or mis-verify.
+
+## The audit log
+
+`audit_events` is the history of the *account and the organization* — distinct from
+`task_events`, which is the history of a task and part of the product.
+
+- Recorded: sign-ins and refused sign-ins, second factors asked for, accepted,
+  refused, turned on and off, recovery codes used, providers linked and unlinked,
+  organizations created and deleted, roles changed, members removed and joined,
+  invitations and invite-code regeneration, tokens minted, revoked and rotated,
+  agent seats opened, integrations connected and disconnected, billing opened, the
+  security policy changed, data exported.
+- Each row carries the organization, the actor, a kind, a target, a JSON `meta` and
+  the client IP as `trust proxy` resolves it.
+- **Actions marked `audited` in the registry write their row after the handler
+  succeeds.** A refused or failed action records nothing, because nothing happened.
+- **Anything in `meta` whose key reads like a credential** (`token`, `secret`,
+  `password`, `code`, `key`, `hash`, …) is stored as `[redacted]`. A log that leaks
+  what it logs about is worse than no log.
+- A sign-in has no organization context, so it is filed against the actor's oldest
+  membership — the same organization a request with no `X-Org-Id` resolves to.
+- `audit.list` (admin+) pages up to 200 rows and filters by date range and kind — a
+  kind ending in a dot is a prefix, so `token.` matches every token event.
+  `audit.export` writes the range as RFC 4180 CSV.
+
+## Taking your data out, and deleting it
+
+- `org.export` (owner) mints a **single-use, five-minute** link;
+  `GET /api/org/export?token=…` builds the archive when it is fetched and re-checks
+  that the caller is still the owner — a role can be taken away between minting and
+  clicking. No Authorization header is needed, which is what lets a browser follow
+  it; the token is the credential, and it works exactly once.
+- The archive is a stored (uncompressed) ZIP written by PTD itself:
+  `organization.json`, `members.csv`, `streams.csv`, `apps.csv`, `tasks.csv`,
+  `task_events.csv`, `time_entries.csv`, `invoices.json`, `audit_events.csv` and a
+  README naming each. CSV is RFC 4180, and a cell beginning `=`, `+`, `-` or `@` is
+  prefixed with an apostrophe so no spreadsheet reads it as a formula.
+- `org.delete` (owner) needs the organization's exact name and refuses while a
+  hosted subscription is live. Deletion cascades through the foreign keys; human
+  members keep their accounts, and an agent seat that existed only there goes with
+  it. The audit row it writes has a **null** organization — the column is a foreign
+  key to the row being deleted — and names what was deleted in its target.
+
 ## Authorization
 
 - **Every action declares its minimum role, and the registry checks it before the
@@ -102,7 +230,8 @@ re-serialized body does not match.
 | Scope | Limit |
 |---|---|
 | Everything under `/api` | 300 requests/minute |
-| `/api/auth/*`, `POST /api/agent/register` | 20 per 15 minutes |
+| `/api/auth/*` (sign-in, reset, TOTP setup/verify/step-up, OIDC start and exchange), `POST /api/agent/register` | 20 per 15 minutes |
+| A single account's 2FA step-up | 5 wrong codes per 5 minutes, then refused regardless of IP |
 | OAuth client registration, CSV upload | 10/minute |
 
 Limits are per client IP, and PTD trusts exactly **one** proxy hop. Two chained
@@ -135,12 +264,17 @@ kill it).
 
 Stated plainly, so nobody assumes otherwise:
 
-- **No SSO/SAML/OIDC login.** Email and password, or an API token.
-- **No 2FA on password login** yet.
+- **No SAML, and no SCIM provisioning.** OIDC sign-in with Google, GitHub and
+  Microsoft is supported (above); enterprise directory sync is not.
+- **No WebAuthn / passkeys.** The second factor is TOTP; hardware keys are not
+  supported yet.
+- **No trusted devices.** Every sign-in asks for the second factor; there is no
+  "remember this browser for 30 days".
 - **No per-token scopes.** A `ptd_` token carries its user's full role in one
   organization. Narrower access means a narrower *seat* — give the agent `member`
   rather than `manager`.
-- **No audit log of reads.** Mutations are recorded in `task_events`; queries are not.
+- **No audit log of reads.** `audit_events` records account and organization
+  changes and `task_events` records task changes; queries are recorded nowhere.
 - **Webhooks are not retried.** One attempt, 5-second timeout, failures logged.
   Reconcile from `task.history` if your endpoint can miss events.
 - **No secrets management.** `.env` is a file on disk; if you need Vault or KMS,

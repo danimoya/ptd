@@ -3,11 +3,17 @@ import React, { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { CopyRow, ErrorNote, Field, KV, Section, Submit } from "@/features/auth/bits";
-import { acceptInvitation, keepSession, lookupInvitation, signIn, signUp, type InviteInfo } from "@/features/auth/api";
+import { CopyRow, ErrorNote, Field, KV, Note, Section, Submit } from "@/features/auth/bits";
+import {
+  acceptInvitation, exchangeOidc, getProviders, isMfaChallenge, keepSession, lookupInvitation, signIn, signUp,
+  OIDC_ERRORS, type InviteInfo, type MfaChallenge, type ProviderSummary,
+} from "@/features/auth/api";
 import InvitePanel from "@/features/auth/InvitePanel";
 import ForgotPanel from "@/features/auth/ForgotPanel";
 import ResetPanel from "@/features/auth/ResetPanel";
+import OidcButtons from "@/features/auth/OidcButtons";
+import TotpPanel from "@/features/auth/TotpPanel";
+import TotpSetupPanel from "@/features/auth/TotpSetupPanel";
 
 /* ─────────────────────────────────────────────────────────────────────────
  * The way in.
@@ -21,9 +27,16 @@ import ResetPanel from "@/features/auth/ResetPanel";
  * `?reset=<token>` opens straight into the new-password form. Both read their
  * token from the query string and never from storage, so a link forwarded to the
  * wrong person is still just a link.
+ *
+ * Two more arrive here without a mode of their own. `?oidc=<code>` is a provider
+ * sign-in coming back: the code is traded for the session over POST and then
+ * scrubbed from the URL, because the token must never be in a link and the code
+ * works once. `?oidc_error=<reason>` is the same trip having failed, said in
+ * words. And a password against an account with 2FA on does not open the door at
+ * all — it swaps this page for one field and a five-minute deadline.
  * ───────────────────────────────────────────────────────────────────────── */
 
-type Mode = "login" | "register" | "agent" | "forgot" | "reset";
+type Mode = "login" | "register" | "agent" | "forgot" | "reset" | "setup";
 
 interface AgentSignupResult {
   user: { id: number; email: string };
@@ -36,6 +49,10 @@ interface AgentSignupResult {
 }
 
 function modeFromQuery(params: URLSearchParams): Mode {
+  // Where a member is sent when their organization requires a second factor they
+  // do not have: the enrolment page cannot live behind the surface that is
+  // refusing them, so it lives here.
+  if (params.get("setup") === "2fa") return "setup";
   if (params.get("reset")) return "reset";
   const value = params.get("mode");
   if (value === "register") return "register";
@@ -61,10 +78,61 @@ export default function Auth() {
   const [invite, setInvite] = useState<InviteInfo | null>(null);
   const [joined, setJoined] = useState<string | null>(null);
 
+  // The 2FA step. Its presence, not a `mode`, is what replaces the form: it can
+  // be reached from a password *or* from a provider sign-in, and neither of those
+  // is a door the person chose from the switcher.
+  const [challenge, setChallenge] = useState<MfaChallenge | null>(null);
+  const [providers, setProviders] = useState<ProviderSummary[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
+
   const [agentName, setAgentName] = useState("");
   const [inviteCode, setInviteCode] = useState("");
   const [agentEmail, setAgentEmail] = useState("");
   const [agentResult, setAgentResult] = useState<AgentSignupResult | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    getProviders().then((list) => live && setProviders(list));
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  // A provider sign-in coming back. The code is single-use and short-lived, so it
+  // is spent once and dropped from the URL either way — a reload must not retry a
+  // code the server has already burned.
+  useEffect(() => {
+    const failure = params.get("oidc_error");
+    if (failure) {
+      setError(OIDC_ERRORS[failure] ?? `That sign-in did not finish (${failure}).`);
+      stripOidcParams();
+      return;
+    }
+    const code = params.get("oidc");
+    if (!code) return;
+    let live = true;
+    setBusy(true);
+    exchangeOidc(code)
+      .then((result) => {
+        if (!live) return;
+        if (isMfaChallenge(result)) {
+          setChallenge(result);
+          return;
+        }
+        keepSession(result.token, result.user?.email, result.orgId ?? undefined);
+        enter();
+      })
+      .catch((e) => live && setError(e instanceof Error ? e.message : "That sign-in could not be completed"))
+      .finally(() => {
+        if (!live) return;
+        setBusy(false);
+        stripOidcParams();
+      });
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // What the invitation is for, and the address it is bound to. A token the
   // server will not vouch for simply produces no panel.
@@ -90,9 +158,18 @@ export default function Auth() {
   };
 
   /** Land in the app. A reload so `useMe` refetches against the new token. */
-  const enter = () => {
-    navigate("/");
+  const enter = (to = "/") => {
+    navigate(to);
     window.location.reload();
+  };
+
+  /** Take the one-time code (or the failure) out of the address bar. */
+  const stripOidcParams = () => {
+    const next = new URLSearchParams(window.location.search);
+    next.delete("oidc");
+    next.delete("oidc_error");
+    const query = next.toString();
+    window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
   };
 
   const submit = async () => {
@@ -108,6 +185,13 @@ export default function Auth() {
               ...(orgName.trim() ? { orgName: orgName.trim() } : {}),
             })
           : await signIn(email.trim(), password);
+      if (isMfaChallenge(result)) {
+        // Correct password, account has 2FA: nothing is stored yet — the pre-auth
+        // token lives in component state only, and is not a session.
+        setChallenge(result);
+        setBusy(false);
+        return;
+      }
       if (!result.token) throw new Error("No token came back — try again");
       keepSession(result.token, result.user?.email ?? email.trim());
 
@@ -159,7 +243,11 @@ export default function Auth() {
 
   const heading = agentResult
     ? "Save the token"
-    : mode === "register"
+    : mode === "setup"
+      ? "Set up two-factor authentication"
+      : challenge
+      ? "One more step"
+      : mode === "register"
       ? invite && !invite.accepted && !invite.expired
         ? `Join ${invite.orgName}`
         : "Create an organization"
@@ -173,7 +261,11 @@ export default function Auth() {
 
   const subhead = agentResult
     ? "It is shown exactly once. Copy it into the agent's config before you leave this page."
-    : mode === "register"
+    : mode === "setup"
+      ? "An authenticator app, one scan, and six digits. Two minutes, once."
+      : challenge
+      ? "Your account has two-factor authentication on. The code from your authenticator, or one recovery code."
+      : mode === "register"
       ? invite && !invite.accepted && !invite.expired
         ? `Create an account for ${invite.email} and you are on the roll as ${invite.role}.`
         : "One organization, four surfaces, every person and agent on the same roll."
@@ -206,6 +298,12 @@ export default function Auth() {
           <h1 className="font-display text-[2rem] leading-tight tracking-[-0.025em] text-ink sm:text-[2.4rem]">{heading}</h1>
           <p className="mt-2 mb-8 text-[1rem] leading-relaxed text-ink-muted text-pretty">{subhead}</p>
 
+          {notice && (
+            <div className="mb-5">
+              <Note testId="auth-notice">{notice}</Note>
+            </div>
+          )}
+
           {agentResult ? (
             <AgentResultPanel
               result={agentResult}
@@ -215,6 +313,23 @@ export default function Auth() {
                 setAgentName("");
                 setInviteCode("");
                 setAgentEmail("");
+              }}
+            />
+          ) : mode === "setup" ? (
+            <TotpSetupPanel onDone={() => enter()} />
+          ) : challenge ? (
+            <TotpPanel
+              challenge={challenge}
+              onSession={(token, addr, note) => {
+                keepSession(token, addr ?? email.trim() ?? undefined);
+                if (note) setNotice(note);
+                enter();
+              }}
+              onCancel={() => {
+                setChallenge(null);
+                setPassword("");
+                setError(null);
+                setMode("login");
               }}
             />
           ) : mode === "reset" ? (
@@ -355,7 +470,7 @@ export default function Auth() {
               {error && (
                 <button
                   type="button"
-                  onClick={enter}
+                  onClick={() => enter()}
                   className="focus-ink font-numeric text-[11px] uppercase tracking-[0.18em] text-ink-muted hover:text-ink"
                 >
                   Continue to PTD &rarr;
@@ -366,6 +481,12 @@ export default function Auth() {
               <Submit busy={busy} disabled={!email || !password}>
                 {mode === "login" ? "Sign in" : invite && !invite.accepted && !invite.expired ? "Create the account" : "Create the organization"}
               </Submit>
+
+              <OidcButtons
+                providers={providers}
+                inviteToken={inviteToken || undefined}
+                label={mode === "register" ? "Or open one with" : "Or continue with"}
+              />
 
               <ModeSwitcher mode={mode} setMode={switchTo} />
             </form>
