@@ -42,7 +42,9 @@ import {
   type ReportRow,
 } from "../track/reports";
 import { foldPatterns, narrate } from "../track/insights";
-import { buildInvoiceData, monthLabel } from "../track/invoice";
+import { buildInvoiceData, invoiceReference, monthLabel } from "../track/invoice";
+import { customerSnapshot } from "../invoices/customer";
+import { certify, verifyUrlFor } from "../invoices/issue";
 
 /* ── Shared input pieces ─────────────────────────────────────────────── */
 
@@ -331,7 +333,7 @@ defineAction({
   name: "invoice.preview",
   title: "What a month's invoice would say",
   description:
-    "The line items a customer's month would bill: one line per stream × task with its session count, human minutes, agent minutes, agent tokens and agent API cost, plus the totals and the agent spend as a pass-through figure. Nothing is written — this is the document a manager reads before committing to it. No hourly rate exists in the schema yet, so the totals are stated in minutes and hours.",
+    "The line items a customer's month would bill: one line per stream × task with its session count, human minutes, agent minutes, agent tokens, agent API cost, the hourly rate that applies and the amount, plus the totals and the agent spend as a pass-through figure. Nothing is written — this is the document a manager reads before committing to it. A stream's own hourly rate overrides the customer's; where neither is recorded the line states hours with no money attached.",
   input: z.object({ customerId: customerIdIn, month: monthIn, year: yearIn }),
   requiredRole: "manager",
   surface: "track",
@@ -349,9 +351,10 @@ defineAction({
   name: "invoice.generate",
   title: "Commit a month's invoice",
   description:
-    "Record the invoice (status 'generated', total held in minutes because no hourly rate is configured) and hand back the URL of its PDF. The PDF is rendered on demand from the ledger at `pdfUrl`, so it always reflects the rows as they stand; regenerating the same month creates a second, separately numbered invoice rather than overwriting the first.",
+    "Issue the invoice: freeze the month's entries into a signed snapshot, lock them against further edits, and hand back the document's verification URL and PDF. The snapshot records each entry's times and a hash of its immutable columns; the record is hashed and signed with the deployment's Ed25519 key, so the customer — or their accountant — can confirm at the verification URL that this deployment issued the document and that the hours behind it have not moved since. Because the rows are now locked, re-issuing a month means voiding the first invoice with `invoice.void` rather than generating a second on top of it.",
   input: z.object({ customerId: customerIdIn, month: monthIn, year: yearIn }),
   requiredRole: "manager",
+  audited: true,
   surface: "track",
   handler: async (args, ctx) => {
     // Preview first: this both validates the customer is in the org and gives
@@ -363,29 +366,66 @@ defineAction({
       month: args.month,
       year: args.year,
     });
+    if (data.alreadyInvoiced?.length) {
+      const first = data.alreadyInvoiced[0];
+      throw new ActionError(
+        "conflict",
+        `${data.alreadyInvoiced.length} of that month's entries are already frozen into invoice ${first.invoiceId} (entry ${first.entryId}). Void it first if the month needs re-issuing.`
+      );
+    }
+    const issuedAt = new Date();
     const [row] = await db
       .insert(invoices)
       .values({
         orgId: ctx.orgId,
         customerId: args.customerId,
         userId: ctx.userId,
+        kind: "customer",
         month: args.month,
         year: args.year,
-        status: "generated",
-        totalAmount: data.totals.minutes,
+        status: "issued",
+        currency: data.currency ?? "USD",
+        rate: data.customer.hourlyRate ?? null,
+        totalMinutes: data.totals.minutes,
+        amountCents: data.totals.amountCents,
+        totalAmount: data.totals.amountCents ?? data.totals.minutes,
+        issuedAt,
       })
       .returning();
-    const pdfUrl = invoicePdfPath(row.id);
-    await db.update(invoices).set({ pdfUrl, updatedAt: new Date() }).where(eq(invoices.id, row.id));
+
+    // The reference is inside what gets signed, so the row — and therefore its
+    // number — has to exist before the snapshot can be built.
+    const reference = invoiceReference(args.year, args.month, row.id);
+    const issued = await certify({
+      orgId: ctx.orgId,
+      invoiceId: row.id,
+      reference,
+      snapshot: customerSnapshot({ ...data, invoiceId: row.id, reference, status: "issued", issuedAt: issuedAt.toISOString() }),
+      entryIds: (data.entries ?? []).map((e) => e.entryId),
+      currency: data.currency ?? "USD",
+      rate: data.customer.hourlyRate ?? null,
+      totalMinutes: data.totals.minutes,
+      amountCents: data.totals.amountCents,
+      issuedAt,
+    });
+
     return {
       invoiceId: row.id,
-      pdfUrl,
-      reference: `PTD-${args.year}-${String(args.month).padStart(2, "0")}-${String(row.id).padStart(4, "0")}`,
-      status: "generated",
+      kind: "customer",
+      pdfUrl: issued.pdfUrl,
+      reference: issued.reference,
+      verifyUrl: issued.verifyUrl,
+      verifyToken: issued.verifyToken,
+      contentHash: issued.contentHash,
+      signingKeyId: issued.signingKeyId,
+      status: "issued",
       customer: data.customer,
       period: data.period,
+      currency: data.currency ?? "USD",
       totals: data.totals,
       lineCount: data.lines.length,
+      entryCount: (data.entries ?? []).length,
+      lockedEntryIds: (data.entries ?? []).map((e) => e.entryId),
     };
   },
 });
@@ -393,7 +433,8 @@ defineAction({
 defineAction({
   name: "invoice.list",
   title: "Invoices issued",
-  description: "Every invoice recorded for the organization, newest period first, with the customer it was rendered to, who issued it, the total in minutes and the URL of its PDF.",
+  description:
+    "Every customer invoice recorded for the organization, newest period first, with the customer it was rendered to, who issued it, the total in minutes and money, whether it has been voided, and the URLs of its PDF and its public verification page. Contractor invoices have their own list — `invoice.contractor_list` — because a member may read their own.",
   input: z.object({
     customerId: customerIdIn.describe("Only this customer's invoices.").optional(),
     limit: z.number().int().min(1).max(200).describe("Maximum rows (default 100).").optional(),
@@ -401,7 +442,7 @@ defineAction({
   requiredRole: "manager",
   surface: "track",
   handler: async (args, ctx) => {
-    const filters = [eq(invoices.orgId, ctx.orgId)];
+    const filters = [eq(invoices.orgId, ctx.orgId), eq(invoices.kind, "customer")];
     if (args.customerId !== undefined) filters.push(eq(invoices.customerId, args.customerId));
     const rows = await db
       .select({
@@ -415,6 +456,12 @@ defineAction({
         status: invoices.status,
         totalMinutes: invoices.totalAmount,
         pdfUrl: invoices.pdfUrl,
+        reference: invoices.reference,
+        currency: invoices.currency,
+        amountCents: invoices.amountCents,
+        contentHash: invoices.contentHash,
+        verifyToken: invoices.verifyToken,
+        voidedAt: invoices.voidedAt,
         createdAt: invoices.createdAt,
       })
       .from(invoices)
@@ -430,6 +477,9 @@ defineAction({
       periodLabel: monthLabel(r.month, r.year),
       pdfUrl: r.pdfUrl ?? invoicePdfPath(r.id),
       totalMinutes: r.totalMinutes ?? 0,
+      reference: r.reference ?? invoiceReference(r.year, r.month, r.id),
+      verifyUrl: r.verifyToken ? verifyUrlFor(r.verifyToken) : null,
+      voided: r.voidedAt !== null,
     }));
   },
 });

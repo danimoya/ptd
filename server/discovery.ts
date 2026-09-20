@@ -1,6 +1,33 @@
-import type { Express, Request, Response } from "express";
+import type { Express, NextFunction, Request, RequestHandler, Response } from "express";
 import { z } from "zod";
 import { allActions } from "./actions";
+
+/**
+ * The public documents an agent or a browser-based MCP client reads before it has a
+ * token: the manifest, `llms.txt`, and (from server/oauth/routes.ts) the two OAuth
+ * metadata documents. All of them are fetched cross-origin from a page, so they all
+ * answer the preflight and expose `WWW-Authenticate` — the header a connector needs
+ * to read off the 401 that sends it to the authorization server.
+ */
+export function corsHeaders(res: Response, methods = "GET, OPTIONS"): void {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", methods);
+  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, MCP-Protocol-Version, X-Request-Id");
+  res.setHeader("Access-Control-Expose-Headers", "WWW-Authenticate, X-Request-Id");
+  res.setHeader("Access-Control-Max-Age", "86400");
+}
+
+/** CORS for a family of public documents; answers OPTIONS itself, passes GET through. */
+export function publicDocumentCors(methods = "GET, OPTIONS"): RequestHandler {
+  return (req: Request, res: Response, next: NextFunction) => {
+    corsHeaders(res, methods);
+    if (req.method === "OPTIONS") {
+      res.status(204).end();
+      return;
+    }
+    next();
+  };
+}
 
 function describeShape(shape: z.ZodRawShape) {
   const out: Record<string, string> = {};
@@ -73,14 +100,20 @@ export function buildManifest(req: Request) {
 }
 
 export function registerDiscovery(app: Express) {
+  // Everything under /.well-known is a public document: one CORS layer covers this
+  // module's manifest and the OAuth metadata that server/oauth/routes.ts adds later.
+  app.use("/.well-known", publicDocumentCors());
+
   const handler = (req: Request, res: Response) => {
     res.setHeader("Cache-Control", "public, max-age=300");
     res.json(buildManifest(req));
   };
   app.get("/.well-known/ai-agent.json", handler);
-  app.get("/api/agent/discovery", handler);
+  app.options("/api/agent/discovery", publicDocumentCors());
+  app.get("/api/agent/discovery", publicDocumentCors(), handler);
 
-  app.get("/llms.txt", (req: Request, res: Response) => {
+  app.options("/llms.txt", publicDocumentCors());
+  app.get("/llms.txt", publicDocumentCors(), (req: Request, res: Response) => {
     const m = buildManifest(req);
     const lines = [
       `# ${m.title}`, "", m.description, "",

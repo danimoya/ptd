@@ -341,7 +341,7 @@ describe("rendering", () => {
 describe("linking", () => {
   it("binds the Slack user to the PTD user the code was minted for", async () => {
     const linkIdentity = vi.fn(async () => undefined);
-    const { code } = mintLinkCode({ userId: 7, orgId: 3, displayName: "Dani" });
+    const { code } = await mintLinkCode({ userId: 7, orgId: 3, displayName: "Dani" });
     const reply = await handleLink({ payload: payloadFor(`link ${code}`), orgId: 3, orgName: "Acme", code }, { linkIdentity });
     expect(linkIdentity).toHaveBeenCalledWith(7, "T1", "U1");
     expect(body(reply)).toContain("Linked.");
@@ -350,7 +350,7 @@ describe("linking", () => {
 
   it("spends the code, so a replay fails", async () => {
     const linkIdentity = vi.fn(async () => undefined);
-    const { code } = mintLinkCode({ userId: 7, orgId: 3, displayName: "Dani" });
+    const { code } = await mintLinkCode({ userId: 7, orgId: 3, displayName: "Dani" });
     await handleLink({ payload: payloadFor(`link ${code}`), orgId: 3, orgName: "Acme", code }, { linkIdentity });
     const again = await handleLink({ payload: payloadFor(`link ${code}`), orgId: 3, orgName: "Acme", code }, { linkIdentity });
     expect(linkIdentity).toHaveBeenCalledTimes(1);
@@ -359,7 +359,7 @@ describe("linking", () => {
 
   it("refuses a code minted in a different organization", async () => {
     const linkIdentity = vi.fn(async () => undefined);
-    const { code } = mintLinkCode({ userId: 7, orgId: 99, displayName: "Dani" });
+    const { code } = await mintLinkCode({ userId: 7, orgId: 99, displayName: "Dani" });
     const reply = await handleLink({ payload: payloadFor(`link ${code}`), orgId: 3, orgName: "Acme", code }, { linkIdentity });
     expect(linkIdentity).not.toHaveBeenCalled();
     expect(body(reply)).toContain("different PTD organization");
@@ -375,7 +375,7 @@ describe("linking", () => {
     for (let i = 0; i < 11; i++) {
       await handleLink({ payload: payloadFor("link ZZZZZZ"), orgId: 3, orgName: "Acme", code: "ZZZZZZ" }, { linkIdentity });
     }
-    const { code } = mintLinkCode({ userId: 7, orgId: 3, displayName: "Dani" });
+    const { code } = await mintLinkCode({ userId: 7, orgId: 3, displayName: "Dani" });
     const blocked = await handleLink({ payload: payloadFor(`link ${code}`), orgId: 3, orgName: "Acme", code }, { linkIdentity });
     expect(body(blocked)).toContain("Too many bad codes");
     expect(linkIdentity).not.toHaveBeenCalled();

@@ -6,9 +6,9 @@ vi.mock("../../db", async () => {
 });
 
 import { db } from "../../db";
-import { customers, memberships, streams, taskEvents, tasks, timeEntries } from "../../db/schema";
+import { customers, importRuns, memberships, streams, taskEvents, tasks, timeEntries } from "../../db/schema";
 import type { ActionContext } from "../../server/actions/registry";
-import { clearHistory, commit, descriptionToStore, prepare, preview, runsFor } from "../../server/importers/apply";
+import { commit, descriptionToStore, prepare, preview, runsFor } from "../../server/importers/apply";
 import type { FakeDb } from "./fake-db";
 
 const fake = db as unknown as FakeDb;
@@ -54,7 +54,6 @@ const JIRA_CSV = [
 
 beforeEach(() => {
   fake.reset();
-  clearHistory();
 });
 
 describe("prepare", () => {
@@ -201,13 +200,37 @@ describe("commit — tasks", () => {
     expect(fake.insertedInto(streams)).toHaveLength(2);
   });
 
-  it("records the run in the in-memory history", async () => {
+  it("records the run as an import_runs row, warnings and all", async () => {
     queueOrg();
     await commit({ csv: JIRA_CSV }, ctx());
-    const runs = runsFor(5);
-    expect(runs).toHaveLength(1);
-    expect(runs[0]).toMatchObject({ source: "jira", kind: "task", created: 5, skipped: 1, by: "Elena Ruiz" });
-    expect(runsFor(6)).toEqual([]); // another org sees nothing
+    const [row] = fake.insertedInto(importRuns);
+    expect(row).toMatchObject({ orgId: 5, userId: 2, source: "jira", created: 5, skipped: 1 });
+    // The run's warnings travel with it, so "what did that import complain about"
+    // survives the restart the in-memory list did not.
+    expect(row.warnings).toEqual(['Column "Labels" appears 2 times; all copies are read.']);
+  });
+
+  it("reads the history back out of the table, newest first and per organization", async () => {
+    const at = new Date("2026-09-19T08:00:00.000Z");
+    fake.queue(importRuns, [
+      { at, source: "jira", created: 5, updated: 1, skipped: 1, warnings: ["error: row 3 blew up", "row 6: skipped"], userId: 9, displayName: "Claude Worker", isAgent: true },
+    ]);
+    const runs = await runsFor(5);
+    expect(runs).toEqual([
+      {
+        at: at.toISOString(),
+        source: "jira",
+        kind: "task",
+        by: "Claude Worker (agent)",
+        created: 5,
+        updated: 1,
+        skipped: 1,
+        warnings: ["row 6: skipped"],
+        errors: 1,
+      },
+    ]);
+    // Nothing queued for the next call: another organization sees an empty list.
+    await expect(runsFor(6)).resolves.toEqual([]);
   });
 
   it("re-imports the same file as updates, not duplicates", async () => {

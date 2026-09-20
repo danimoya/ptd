@@ -1,3 +1,6 @@
+import { and, eq } from "drizzle-orm";
+import { db } from "../../../db";
+import { chatIdentities } from "../../../db/schema";
 import { TELEGRAM_PROVIDER } from "../shared/providers";
 import {
   identitiesForUser,
@@ -24,39 +27,49 @@ import {
  *   3. otherwise their oldest membership — the same default `resolveOrg` applies to a
  *      web request that arrives without an `X-Org-Id` header.
  *
- * The chosen organization is held in memory, deliberately, and NOT in the identity
- * row's externalId: that column is the join key every lookup and every outbound DM
- * matches on, so encoding a mutable preference into it would mean rewriting the key
- * on every `/org` and breaking any row written before the suffix existed. The cost is
- * that a restart forgets the choice and the default comes back — visible, harmless,
- * and one `/org` away from fixed. (A multi-replica deployment would need this in the
- * database, exactly as the in-memory link codes would.)
+ * The chosen organization is the identity row's own `org_id` column, NOT a suffix on
+ * `externalId`: that column is the join key every lookup and every outbound DM matches
+ * on, so encoding a mutable preference into it would mean rewriting the key on every
+ * `/org` and breaking any row written before the suffix existed. Because the choice is
+ * a column, it survives a restart and it is the same choice on every app replica.
  */
 
 export const TELEGRAM_PROVIDER_NAME = TELEGRAM_PROVIDER;
-
-/** Telegram user id → the org they last selected with `/org`. */
-const chosenOrg = new Map<string, number>();
 
 export function externalIdFor(telegramUserId: string | number): string {
   return String(telegramUserId);
 }
 
-export function rememberOrgChoice(externalId: string, orgId: number): void {
-  chosenOrg.set(externalId, orgId);
+function identityWhere(externalId: string) {
+  return and(eq(chatIdentities.provider, TELEGRAM_PROVIDER), eq(chatIdentities.externalId, externalId));
 }
 
-export function forgetOrgChoice(externalId: string): void {
-  chosenOrg.delete(externalId);
+/**
+ * Remember the `/org` choice.
+ *
+ * Never rejects: `/org` is a chat command whose answer has already been composed by
+ * the time this runs, and a database hiccup there should show up in the log, not as
+ * an unhandled rejection in the webhook handler.
+ */
+export async function rememberOrgChoice(externalId: string, orgId: number): Promise<void> {
+  try {
+    await db.update(chatIdentities).set({ orgId }).where(identityWhere(externalId));
+  } catch (err) {
+    console.warn(`[telegram] could not store the /org choice for ${externalId}:`, err instanceof Error ? err.message : err);
+  }
 }
 
-export function orgChoiceOf(externalId: string): number | null {
-  return chosenOrg.get(externalId) ?? null;
+export async function forgetOrgChoice(externalId: string): Promise<void> {
+  try {
+    await db.update(chatIdentities).set({ orgId: null }).where(identityWhere(externalId));
+  } catch (err) {
+    console.warn(`[telegram] could not clear the /org choice for ${externalId}:`, err instanceof Error ? err.message : err);
+  }
 }
 
-/** Test helper: forget every remembered organization choice. */
-export function resetOrgChoices(): void {
-  chosenOrg.clear();
+export async function orgChoiceOf(externalId: string): Promise<number | null> {
+  const [row] = await db.select({ orgId: chatIdentities.orgId }).from(chatIdentities).where(identityWhere(externalId)).limit(1);
+  return row?.orgId ?? null;
 }
 
 export type TelegramResolution =
@@ -73,11 +86,11 @@ export async function resolveTelegramCaller(externalId: string): Promise<Telegra
   const orgs = await orgsForUser(userId);
   if (orgs.length === 0) return { ok: false, reason: "no_membership", userId };
 
-  const chosen = orgChoiceOf(externalId);
+  const chosen = await orgChoiceOf(externalId);
   if (chosen !== null && !orgs.some((o) => o.orgId === chosen)) {
     // They were removed from the organization they had selected; make them pick again
     // rather than silently acting on a different one.
-    forgetOrgChoice(externalId);
+    await forgetOrgChoice(externalId);
     return { ok: false, reason: "not_a_member_of_choice", userId, orgs };
   }
 
@@ -91,8 +104,8 @@ export function linkTelegramIdentity(userId: number, externalId: string): Promis
   return linkChatIdentity(TELEGRAM_PROVIDER, userId, externalId);
 }
 
+/** Unlinking deletes the identity row, which takes the `/org` choice with it. */
 export function unlinkTelegramIdentity(externalId: string): Promise<number> {
-  forgetOrgChoice(externalId);
   return unlinkChatIdentity(TELEGRAM_PROVIDER, externalId);
 }
 
@@ -100,8 +113,7 @@ export function telegramIdentitiesForUser(userId: number): Promise<string[]> {
   return identitiesForUser(TELEGRAM_PROVIDER, userId);
 }
 
-export async function removeTelegramIdentitiesForUser(userId: number): Promise<number> {
-  for (const externalId of await telegramIdentitiesForUser(userId)) forgetOrgChoice(externalId);
+export function removeTelegramIdentitiesForUser(userId: number): Promise<number> {
   return removeIdentitiesForUser(TELEGRAM_PROVIDER, userId);
 }
 

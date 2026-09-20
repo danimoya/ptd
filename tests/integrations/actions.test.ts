@@ -154,6 +154,7 @@ await import("../../server/actions/github");
 await import("../../server/actions/telegram");
 await import("../../server/actions/teams");
 const { ActionError, getAction, runAction } = await import("../../server/actions/registry");
+const { resetLinkState } = await import("../../server/integrations/shared/linkCodes");
 
 const ctxFor = (role: Role = "admin"): ActionContext => ({
   userId: 7,
@@ -194,6 +195,8 @@ beforeEach(() => {
   process.env.PTD_SECRET_KEY = "actions-test-key";
   process.env.PTD_BASE_URL = "https://ptd.example.com";
   vi.clearAllMocks();
+  // Link codes are a table now; the in-memory store keeps this suite database-free.
+  resetLinkState();
   stubs.mapping.direction = "both";
   stubs.getGithubForOrg.mockResolvedValue(stubs.githubRow);
   stubs.getTelegramForOrg.mockResolvedValue(stubs.telegramRow);

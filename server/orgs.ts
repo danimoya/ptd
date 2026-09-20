@@ -10,6 +10,9 @@ import { hasRole, isRole, type AuthenticatedRequest, type OrgRequest } from "./t
 import { assertWithinPlan } from "./billing/limits";
 import { ActionError } from "./actions/registry";
 import { invitationUrl, sendInvitationEmail } from "./email/send";
+import { getOrgSecurity } from "./auth/security";
+import { audit } from "./audit/log";
+import { buildOrgExport, redeemExportToken } from "./export/orgExport";
 
 /**
  * Binds req.org = {id, role}. Order of precedence: X-Org-Id header, ?orgId,
@@ -32,6 +35,32 @@ export async function resolveOrg(req: Request, res: Response, next: NextFunction
     if (!row) return res.status(409).json({ error: "No organization bound to this account yet" });
   }
   req.org = { id: row.orgId, role: (isRole(row.role) ? row.role : "member") as Role };
+
+  /**
+   * The organization-wide 2FA policy, enforced at the one place every org-scoped
+   * request passes through. Two deliberate exemptions:
+   *
+   *  - **Agent seats.** An agent cannot hold a phone. Its credential is a
+   *    scoped bearer token an admin minted and can revoke, which is the control
+   *    that applies to it. A *human's* API token is not exempt — `isAgent` is the
+   *    test, not the auth path — so a member cannot side-step the policy by using
+   *    the CLI.
+   *  - **Nothing else.** Owners included: the action that turns the policy on
+   *    refuses unless the caller already has 2FA, so this cannot lock out the
+   *    person who set it.
+   *
+   * The account surface (/api/auth/**) is outside the org scope on purpose, so a
+   * member who is refused here can still reach the page that fixes it.
+   */
+  const policy = await getOrgSecurity(row.orgId);
+  if (policy.requireTotp && !ar.user[0].isAgent && !ar.user[0].totpEnabled) {
+    return res.status(403).json({
+      error: "totp_required",
+      message:
+        "This organization requires two-factor authentication. Set it up under Org → Security (or /api/auth/totp/setup) and sign in again.",
+      setupPath: "/org/security",
+    });
+  }
   next();
 }
 
@@ -94,6 +123,7 @@ export function registerOrgRoutes(app: Express) {
   app.post("/api/orgs", auth, validate(createOrgSchema), async (req: Request, res: Response) => {
     const ar = req as AuthenticatedRequest;
     const org = await createOrganization(req.body.name, ar.user[0].id);
+    audit({ orgId: org.id, userId: ar.user[0].id, label: `${ar.user[0].displayName} <${ar.user[0].email}>` }, "org.created", org.name, { slug: org.slug });
     res.status(201).json({ ...org, role: "owner" });
   });
 
@@ -125,6 +155,7 @@ export function registerOrgRoutes(app: Express) {
     // The letter is a courtesy, not the mechanism: `acceptUrl` comes back either
     // way so an admin on a deployment without SMTP can paste the link themselves.
     const delivery = await mailInvitation(row, await orgNameOf(r.org.id), r.user[0].displayName);
+    audit(req, "invite.created", req.body.email, { role: req.body.role, delivered: delivery.sent });
     res.status(201).json({ ...row, acceptUrl: invitationUrl(row.token), delivery });
   });
 
@@ -184,6 +215,7 @@ export function registerOrgRoutes(app: Express) {
       await db.insert(memberships).values({ orgId: invite.orgId, userId: ar.user[0].id, role: invite.role, invitedBy: invite.invitedBy });
     }
     await db.update(invitations).set({ acceptedAt: new Date() }).where(eq(invitations.id, invite.id));
+    audit({ orgId: invite.orgId, userId: ar.user[0].id, label: `${ar.user[0].displayName} <${ar.user[0].email}>` }, "member.joined", ar.user[0].email, { role: invite.role });
     res.json({ orgId: invite.orgId, role: invite.role });
   });
 
@@ -194,6 +226,9 @@ export function registerOrgRoutes(app: Express) {
     if (!code || req.body.regenerate) {
       code = randomBytes(8).toString("hex");
       await db.update(organizations).set({ inviteCode: code }).where(eq(organizations.id, r.org.id));
+      // Regenerating is a revocation: every agent still holding the old code is
+      // locked out of self-registration, so it belongs in the audit log.
+      audit(req, "invite.code_regenerated", `org:${r.org.id}`, { regenerate: req.body.regenerate === true });
     }
     res.json({ inviteCode: code });
   });
@@ -205,7 +240,46 @@ export function registerOrgRoutes(app: Express) {
     const [row] = await db.update(memberships).set({ role: req.body.role })
       .where(and(eq(memberships.orgId, r.org.id), eq(memberships.userId, targetId))).returning();
     if (!row) return res.status(404).json({ error: "Member not found" });
+    audit(req, "member.role_changed", `user:${targetId}`, { role: req.body.role });
     res.json(row);
+  });
+
+  /**
+   * The export download. Authorised by a one-time token the `org.export` action
+   * minted, because a browser cannot attach an Authorization header to a plain
+   * navigation and an action result is JSON — a multi-megabyte ZIP is not. The
+   * token is single-use, good for five minutes, and bound to one organization and
+   * one user, whose ownership is re-checked here rather than trusted from the
+   * token: a role can be taken away between minting and clicking.
+   */
+  app.get("/api/org/export", async (req: Request, res: Response) => {
+    const token = String(req.query.token ?? "");
+    if (!/^[a-f0-9]{16,96}$/i.test(token)) return res.status(400).json({ error: "bad_token" });
+    const grant = redeemExportToken(token);
+    if (!grant) return res.status(404).json({ error: "expired", message: "That download link has expired or has already been used." });
+
+    const [membership] = await db
+      .select({ role: memberships.role })
+      .from(memberships)
+      .where(and(eq(memberships.orgId, grant.orgId), eq(memberships.userId, grant.userId)))
+      .limit(1);
+    if (!membership || membership.role !== "owner") return res.status(403).json({ error: "forbidden" });
+
+    const [user] = await db.select().from(users).where(eq(users.id, grant.userId)).limit(1);
+    try {
+      const archive = await buildOrgExport(grant.orgId, { email: user?.email ?? "unknown", displayName: user?.displayName ?? "unknown" });
+      audit({ orgId: grant.orgId, userId: grant.userId, label: user ? `${user.displayName} <${user.email}>` : null }, "org.exported", archive.filename, archive.summary);
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader("Content-Disposition", `attachment; filename="${archive.filename}"`);
+      res.setHeader("Content-Length", String(archive.zip.length));
+      res.setHeader("Cache-Control", "no-store");
+      res.end(archive.zip);
+    } catch (err) {
+      // Express 4 does not catch a rejected async handler, and an unhandled
+      // rejection ends the process — so this one owns its own failure.
+      console.error("[export] could not build the archive:", err);
+      res.status(500).json({ error: "export_failed", message: "The archive could not be built. The error is in the server log." });
+    }
   });
 
   app.delete("/api/orgs/current/members/:userId", auth, resolveOrg, requireRole("admin"), async (req: Request, res: Response) => {
@@ -215,6 +289,7 @@ export function registerOrgRoutes(app: Express) {
     if (targetId === r.user[0].id && r.org.role === "owner") return res.status(400).json({ error: "Owners cannot remove themselves" });
     const deleted = await db.delete(memberships).where(and(eq(memberships.orgId, r.org.id), eq(memberships.userId, targetId))).returning({ id: memberships.id });
     if (deleted.length === 0) return res.status(404).json({ error: "Member not found" });
+    audit(req, "member.removed", `user:${targetId}`, { self: targetId === r.user[0].id });
     res.json({ removed: targetId });
   });
 }

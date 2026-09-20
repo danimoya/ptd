@@ -1,5 +1,4 @@
 import type { Express, Request, Response, NextFunction } from "express";
-import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { randomBytes } from "crypto";
 import { and, eq, isNull } from "drizzle-orm";
@@ -12,17 +11,20 @@ import { verifyApiToken } from "./tokens";
 import { hashOpaque } from "./oauth/pkce";
 import { isEmailConfigured } from "./email/transport";
 import { passwordResetUrl, sendPasswordResetEmail } from "./email/send";
+import { PRE_AUTH_TTL_SECONDS, signPurposeJwt, signSessionJwt, verifySessionJwt } from "./auth/jwt";
+import { registerTotpRoutes } from "./auth/totpRoutes";
+import { registerOidcRoutes } from "./oidc/routes";
+import { auditContextMiddleware } from "./audit/context";
+import { audit } from "./audit/log";
 
-const JWT_SECRET = process.env.JWT_SECRET || (process.env.NODE_ENV === "production" ? "" : "dev-secret");
-if (!JWT_SECRET) throw new Error("JWT_SECRET must be set in production");
-
-export function signJwt(userId: number): string {
-  return jwt.sign({ id: userId }, JWT_SECRET, { expiresIn: "7d" });
-}
-
-export function verifyJwt(token: string): { id: number } {
-  return jwt.verify(token, JWT_SECRET) as { id: number };
-}
+/**
+ * Session tokens live in ./auth/jwt.ts, which is also where the rule that a
+ * purposed token (the five-minute one between a password and a TOTP code) can
+ * never be used as a session is enforced. Re-exported under the old names so
+ * every existing caller — the WebSocket handshake included — gets that rule.
+ */
+export const signJwt = signSessionJwt;
+export const verifyJwt = verifySessionJwt;
 
 /**
  * Accepts a JWT (browser session) or a ptd_… bearer token (agents, integrations).
@@ -80,8 +82,14 @@ const loginSchema = z.object({ email: z.string().email().max(255), password: z.s
 const forgotSchema = z.object({ email: z.string().email().max(255) });
 const resetSchema = z.object({ token: z.string().min(16).max(128), password: z.string().min(8).max(255) });
 
+/**
+ * What a client may see of a user row. `password_hash` was never shareable; the
+ * sealed TOTP secret and the sealed recovery codes are exactly as sensitive, and
+ * a ciphertext handed to the browser is a ciphertext handed to whoever reads its
+ * storage. `totpEnabled` stays: the client has to know whether to offer setup.
+ */
 function safeUser(u: typeof users.$inferSelect) {
-  const { passwordHash: _pw, ...rest } = u;
+  const { passwordHash: _pw, totpSecretSealed: _totp, recoveryCodesSealed: _codes, ...rest } = u;
   return rest;
 }
 
@@ -138,6 +146,14 @@ export async function redeemPasswordReset(token: string, password: string): Prom
 }
 
 export function registerAuthRoutes(app: Express) {
+  // First middleware any route can see: it records the client IP for the whole
+  // request so the audit log can name it even from an action handler, which never
+  // receives the Express request. Registered here because routes.ts calls this
+  // before every other register*Routes.
+  app.use(auditContextMiddleware());
+  registerTotpRoutes(app);
+  registerOidcRoutes(app);
+
   app.post("/api/auth/register", authLimiter, validate(registerSchema), async (req: Request, res: Response) => {
     const { email, password, displayName, orgName } = req.body as z.infer<typeof registerSchema>;
     const existing = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
@@ -148,15 +164,37 @@ export function registerAuthRoutes(app: Express) {
       .values({ email, passwordHash: await bcrypt.hash(password, 12), displayName: name })
       .returning();
     const org = await createOrganization(orgName?.trim() || `${name}'s organization`, user.id);
+    audit({ orgId: org.id, userId: user.id, label: `${name} <${email}>` }, "auth.register", email, { orgId: org.id });
+    audit({ orgId: org.id, userId: user.id, label: `${name} <${email}>` }, "org.created", org.name, { slug: org.slug, via: "register" });
     res.status(201).json({ user: safeUser(user), org: { id: org.id, name: org.name, slug: org.slug, role: "owner" }, token: signJwt(user.id) });
   });
 
+  /**
+   * A password gets you either a session or, when 2FA is on, a five-minute
+   * purpose-scoped token and nothing else. `mfaRequired` is a 200 on purpose: the
+   * password *was* right, and the client has a second step to take — a 401 here
+   * would be indistinguishable from a wrong password and the SPA would throw the
+   * pre-auth token away.
+   */
   app.post("/api/auth/login", authLimiter, validate(loginSchema), async (req: Request, res: Response) => {
     const { email, password } = req.body as z.infer<typeof loginSchema>;
     const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
     if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
+      // The row is recorded even when there is no account: a burst of failures
+      // against addresses that do not exist is exactly what an admin wants to see.
+      audit({ userId: user?.id ?? null, label: email }, "auth.login_failed", email, { reason: user ? "bad_password" : "unknown_email" });
       return res.status(401).json({ error: "Invalid credentials" });
     }
+    if (user.totpEnabled) {
+      audit({ userId: user.id, label: `${user.displayName} <${user.email}>` }, "auth.mfa_required", user.email, { via: "password" });
+      return res.json({
+        mfaRequired: true,
+        preAuthToken: signPurposeJwt(user.id, "mfa"),
+        expiresInSeconds: PRE_AUTH_TTL_SECONDS,
+        email: user.email,
+      });
+    }
+    audit({ userId: user.id, label: `${user.displayName} <${user.email}>` }, "auth.login", user.email, { via: "password" });
     res.json({ user: safeUser(user), token: signJwt(user.id) });
   });
 
@@ -176,6 +214,7 @@ export function registerAuthRoutes(app: Express) {
     // would be a way in with no way to receive it. Treated as "no account".
     if (user && !user.isAgent) {
       const { token } = await issuePasswordReset(user.id);
+      audit({ userId: user.id, label: `${user.displayName} <${user.email}>` }, "auth.password_reset_requested", user.email);
       const delivery = await sendPasswordResetEmail({
         email: user.email,
         displayName: user.displayName,
@@ -211,6 +250,7 @@ export function registerAuthRoutes(app: Express) {
       return res.status(400).json({ error: message, reason: outcome.reason });
     }
     const [user] = await db.select().from(users).where(eq(users.id, outcome.userId)).limit(1);
+    audit({ userId: outcome.userId, label: `${outcome.displayName} <${outcome.email}>` }, "auth.password_reset", outcome.email);
     res.json({ ok: true, user: user ? safeUser(user) : undefined, token: signJwt(outcome.userId) });
   });
 

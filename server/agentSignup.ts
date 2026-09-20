@@ -11,6 +11,7 @@ import { authLimiter } from "./rate-limit";
 import { buildManifest } from "./discovery";
 import { assertWithinPlan } from "./billing/limits";
 import { ActionError } from "./actions/registry";
+import { audit } from "./audit/log";
 
 const schema = z
   .object({
@@ -67,6 +68,13 @@ export function registerAgentSignup(app: Express) {
     }
 
     const minted = await mintToken(user.id, orgId, `${name} — initial`);
+    // Public endpoint: an admin needs to be able to see, later, that a seat
+    // appeared in their organization and which invite code opened it.
+    audit({ orgId, userId: user.id, label: `${name} <${user.email}>` }, "agent.registered", user.email, {
+      role,
+      viaInviteCode: Boolean(inviteCode),
+      tokenPrefix: minted.prefix,
+    });
     const manifest = buildManifest(req);
     res.status(201).json({
       user: { id: user.id, email: user.email, displayName: user.displayName, isAgent: true },

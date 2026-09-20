@@ -107,7 +107,7 @@ defineAction({
   surface: "org",
   handler: async (_args, ctx) => {
     const row = await requireConnection(ctx.orgId);
-    const minted = mintLinkCode(TEAMS_PROVIDER, { userId: ctx.userId, orgId: ctx.orgId, displayName: ctx.displayName });
+    const minted = await mintLinkCode(TEAMS_PROVIDER, { userId: ctx.userId, orgId: ctx.orgId, displayName: ctx.displayName });
     return {
       code: minted.code,
       command: `@PTD link ${minted.code}`,

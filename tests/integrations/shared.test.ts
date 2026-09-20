@@ -53,23 +53,23 @@ describe("the verb table", () => {
 describe("link codes are scoped per provider", () => {
   beforeEach(() => shared.resetLinkState());
 
-  it("does not let a code minted for one provider be spent in another", () => {
-    const telegram = shared.mintLinkCode("telegram", { userId: 7, orgId: 3, displayName: "Dani" });
-    expect(shared.peekLinkCode("slack", telegram.code)).toBeNull();
-    expect(shared.consumeLinkCode("slack", telegram.code)).toBeNull();
-    expect(shared.consumeLinkCode("telegram", telegram.code)).toMatchObject({ userId: 7, orgId: 3 });
+  it("does not let a code minted for one provider be spent in another", async () => {
+    const telegram = await shared.mintLinkCode("telegram", { userId: 7, orgId: 3, displayName: "Dani" });
+    await expect(shared.peekLinkCode("slack", telegram.code)).resolves.toBeNull();
+    await expect(shared.consumeLinkCode("slack", telegram.code)).resolves.toBeNull();
+    await expect(shared.consumeLinkCode("telegram", telegram.code)).resolves.toMatchObject({ userId: 7, orgId: 3 });
   });
 
-  it("does not invalidate a person's Slack code when they mint a Telegram one", () => {
-    const slack = shared.mintLinkCode("slack", { userId: 7, orgId: 3, displayName: "Dani" });
-    shared.mintLinkCode("telegram", { userId: 7, orgId: 3, displayName: "Dani" });
-    expect(shared.peekLinkCode("slack", slack.code)).not.toBeNull();
+  it("does not invalidate a person's Slack code when they mint a Telegram one", async () => {
+    const slack = await shared.mintLinkCode("slack", { userId: 7, orgId: 3, displayName: "Dani" });
+    await shared.mintLinkCode("telegram", { userId: 7, orgId: 3, displayName: "Dani" });
+    await expect(shared.peekLinkCode("slack", slack.code)).resolves.not.toBeNull();
   });
 
-  it("still drops the previous code of the same person in the same provider and org", () => {
-    const first = shared.mintLinkCode("teams", { userId: 7, orgId: 3, displayName: "Dani" });
-    shared.mintLinkCode("teams", { userId: 7, orgId: 3, displayName: "Dani" });
-    expect(shared.peekLinkCode("teams", first.code)).toBeNull();
+  it("still drops the previous code of the same person in the same provider and org", async () => {
+    const first = await shared.mintLinkCode("teams", { userId: 7, orgId: 3, displayName: "Dani" });
+    await shared.mintLinkCode("teams", { userId: 7, orgId: 3, displayName: "Dani" });
+    await expect(shared.peekLinkCode("teams", first.code)).resolves.toBeNull();
   });
 
   it("counts failures per provider and per account", () => {
@@ -81,13 +81,13 @@ describe("link codes are scoped per provider", () => {
     expect(shared.linkAttemptsBlocked("telegram", "55")).toBe(false);
   });
 
-  it("keeps the Slack adapter's own door onto it working unchanged", () => {
+  it("keeps the Slack adapter's own door onto it working unchanged", async () => {
     slackCodes.resetLinkState();
-    const minted = slackCodes.mintLinkCode({ userId: 7, orgId: 3, displayName: "Dani" });
+    const minted = await slackCodes.mintLinkCode({ userId: 7, orgId: 3, displayName: "Dani" });
     expect(minted.code).toHaveLength(slackCodes.LINK_CODE_LENGTH);
-    expect(shared.peekLinkCode("slack", minted.code)).not.toBeNull();
-    expect(slackCodes.consumeLinkCode(minted.code)).toMatchObject({ userId: 7 });
-    expect(slackCodes.consumeLinkCode(minted.code)).toBeNull();
+    await expect(shared.peekLinkCode("slack", minted.code)).resolves.not.toBeNull();
+    await expect(slackCodes.consumeLinkCode(minted.code)).resolves.toMatchObject({ userId: 7 });
+    await expect(slackCodes.consumeLinkCode(minted.code)).resolves.toBeNull();
   });
 });
 

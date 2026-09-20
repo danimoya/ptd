@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ActionError, defineAction } from "./registry";
 import { AI_NOT_CONFIGURED, aiConfigFromEnv, aiStatus, AiProviderError } from "../ai/provider";
-import { usageTotals } from "../ai/usage";
+import { USAGE_DEFAULT_DAYS, USAGE_MAX_DAYS, usageForOrg, usageTotals, withUsageScope } from "../ai/usage";
 import {
   BATCH_LIMIT_MAX,
   defaultDeps,
@@ -50,6 +50,15 @@ async function withProviderErrors<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * Every provider call made inside `run` lands on this organization's `ai_usage`
+ * ledger. The provider layer is handed a prompt, not a context, so the scope is how
+ * the row learns who is paying — see server/ai/usage.ts.
+ */
+function billed<T>(ctx: { orgId: number; userId: number }, run: () => Promise<T>): Promise<T> {
+  return withUsageScope({ orgId: ctx.orgId, userId: ctx.userId }, run);
+}
+
 defineAction({
   name: "ai.status",
   title: "AI status",
@@ -82,7 +91,7 @@ defineAction({
   surface: "overview",
   handler: async (args, ctx) => {
     requireConfigured();
-    return withProviderErrors(() => suggestPriority(args, ctx, defaultDeps()));
+    return billed(ctx, () => withProviderErrors(() => suggestPriority(args, ctx, defaultDeps())));
   },
 });
 
@@ -115,7 +124,7 @@ defineAction({
   surface: "overview",
   handler: async (args, ctx) => {
     requireConfigured();
-    return withProviderErrors(() => suggestPriorityBatch(args, ctx, defaultDeps()));
+    return billed(ctx, () => withProviderErrors(() => suggestPriorityBatch(args, ctx, defaultDeps())));
   },
 });
 
@@ -123,16 +132,24 @@ defineAction({
   name: "ai.usage",
   title: "AI usage",
   description:
-    "Tokens and estimated dollars spent on AI suggestions by this server process, broken down by model and by action. " +
-    "Kept in memory (the last 500 calls) rather than in a table, so it resets on restart and covers this process only — `truncated: true` means older calls have already fallen out of the window. " +
-    "Costs are estimates from a static price table; `unpriced` counts calls whose model the table did not know.",
-  input: z.object({}),
+    "Tokens and estimated dollars this organization has spent on AI suggestions, from the ai_usage ledger: one row per provider call, so the numbers survive a restart and are the same on every app replica. " +
+    "Totals for the window (30 days by default, up to 365) with breakdowns by day, by member, by model and by action. " +
+    "Costs are estimates from a static price table. `thisProcess` is the last 500 calls this server process happened to make — the same ledger seen through a keyhole, useful right after a batch run.",
+  input: z.object({
+    days: z
+      .number()
+      .int()
+      .min(1)
+      .max(USAGE_MAX_DAYS)
+      .optional()
+      .describe(`How many days back to count, 1–${USAGE_MAX_DAYS} (default ${USAGE_DEFAULT_DAYS}).`),
+  }),
   requiredRole: "admin",
   surface: "overview",
-  handler: async () => {
+  handler: async (args, ctx) => {
     requireConfigured();
-    const totals = usageTotals();
+    const ledger = await usageForOrg(ctx.orgId, { days: args.days });
     const status = aiStatus();
-    return { provider: status.provider, model: status.model, ...totals };
+    return { provider: status.provider, model: status.model, ...ledger, thisProcess: usageTotals() };
   },
 });

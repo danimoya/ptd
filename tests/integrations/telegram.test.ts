@@ -11,7 +11,26 @@ import type { ActionContext } from "../../server/actions/registry";
  * goes through); only `runAction` and the database are stubbed.
  */
 
-vi.mock("../../db", () => ({ db: {} }));
+/**
+ * The `/org` choice is a column on the caller's `chat_identities` row now, so the
+ * database stub has to answer an UPDATE and a SELECT. Every test in this file talks
+ * about the same Telegram account (55), which is why the stub can hold one value
+ * instead of modelling the WHERE clause.
+ */
+const identity = vi.hoisted(() => ({ orgId: null as number | null }));
+
+vi.mock("../../db", () => ({
+  db: {
+    update: () => ({
+      set: (values: { orgId: number | null }) => ({
+        where: async () => {
+          identity.orgId = values.orgId ?? null;
+        },
+      }),
+    }),
+    select: () => ({ from: () => ({ where: () => ({ limit: async () => [{ orgId: identity.orgId }] }) }) }),
+  },
+}));
 
 // The verb table names real actions, so the modules that define them are imported.
 await import("../../server/actions/core");
@@ -27,7 +46,7 @@ const {
   webhookSecretPath,
 } = await import("../../server/integrations/telegram/config");
 const { handleTelegramMessage, parseTelegramCommand, readUpdate } = await import("../../server/integrations/telegram/commands");
-const { resetOrgChoices, orgChoiceOf } = await import("../../server/integrations/telegram/identity");
+const { orgChoiceOf } = await import("../../server/integrations/telegram/identity");
 const { mintLinkCode, resetLinkState } = await import("../../server/integrations/shared/linkCodes");
 const { replyToTelegramHtml } = await import("../../server/integrations/shared/markup");
 const { TELEGRAM_PROVIDER } = await import("../../server/integrations/shared/providers");
@@ -88,7 +107,7 @@ beforeEach(() => {
   process.env.PTD_SECRET_KEY = "telegram-test-key";
   process.env.PTD_BASE_URL = "https://ptd.example.com";
   resetLinkState(TELEGRAM_PROVIDER);
-  resetOrgChoices();
+  identity.orgId = null;
   runAction = vi.fn(async () => ({}));
   resolveTask = vi.fn(async () => ({ id: 42, title: "Ship the adapter", externalKey: "PTD-12" }));
   link = vi.fn(async () => undefined);
@@ -231,7 +250,7 @@ describe("identity and organization", () => {
   });
 
   it("links with a code minted in any organization — the bot serves all of them", async () => {
-    const { code } = mintLinkCode(TELEGRAM_PROVIDER, { userId: 7, orgId: 8, displayName: "Dani" });
+    const { code } = await mintLinkCode(TELEGRAM_PROVIDER, { userId: 7, orgId: 8, displayName: "Dani" });
     const reply = await run(`/link ${code}`);
     expect(link).toHaveBeenCalledWith(7, "55");
     expect(body(reply.reply)).toContain("Linked.");
@@ -239,11 +258,11 @@ describe("identity and organization", () => {
   });
 
   it("spends the code once and refuses a Slack code", async () => {
-    const { code } = mintLinkCode(TELEGRAM_PROVIDER, { userId: 7, orgId: 3, displayName: "Dani" });
+    const { code } = await mintLinkCode(TELEGRAM_PROVIDER, { userId: 7, orgId: 3, displayName: "Dani" });
     await run(`/link ${code}`);
     expect(body((await run(`/link ${code}`)).reply)).toContain("not valid");
 
-    const slack = mintLinkCode("slack", { userId: 7, orgId: 3, displayName: "Dani" });
+    const slack = await mintLinkCode("slack", { userId: 7, orgId: 3, displayName: "Dani" });
     expect(body((await run(`/link ${slack.code}`)).reply)).toContain("not valid");
   });
 
@@ -260,13 +279,13 @@ describe("identity and organization", () => {
 
     const chosen = await run("/org 8");
     expect(body(chosen.reply)).toContain("Beta Lab");
-    expect(orgChoiceOf("55")).toBe(8);
+    await expect(orgChoiceOf("55")).resolves.toBe(8);
   });
 
   it("refuses an organization the caller does not belong to", async () => {
     const reply = await run("/org 99");
     expect(body(reply.reply)).toContain("not a member of organization 99");
-    expect(orgChoiceOf("55")).toBeNull();
+    await expect(orgChoiceOf("55")).resolves.toBeNull();
     expect(body((await run("/org nope")).reply)).toContain("not an organization id");
   });
 

@@ -9,6 +9,7 @@ import { auth } from "./auth";
 import { resolveOrg } from "./orgs";
 import { validate } from "./validation";
 import type { OrgRequest } from "./types";
+import { audit } from "./audit/log";
 
 const scrypt = promisify(scryptCb);
 export const TOKEN_PREFIX = "ptd_";
@@ -90,15 +91,20 @@ export function registerTokenRoutes(app: Express) {
     const { name, expiresInDays } = req.body as z.infer<typeof createSchema>;
     const expiresAt = expiresInDays ? new Date(Date.now() + expiresInDays * 86_400_000) : null;
     const minted = await mintToken(r.user[0].id, r.org.id, name, expiresAt);
+    // The prefix, never the secret: it is the handle an admin reads back in the
+    // log and in the token list, and it is not a credential on its own.
+    audit(req, "token.minted", minted.prefix, { name, expiresAt: expiresAt?.toISOString() ?? null });
     res.status(201).json({ ...minted, auth_header_example: `Authorization: Bearer ${minted.secret}` });
   });
 
   app.post("/api/tokens/rotate", auth, resolveOrg, async (req: Request, res: Response) => {
     const r = req as OrgRequest;
-    await db.update(apiTokens).set({ revokedAt: new Date() })
-      .where(and(eq(apiTokens.userId, r.user[0].id), eq(apiTokens.orgId, r.org.id), isNull(apiTokens.revokedAt)));
+    const revoked = await db.update(apiTokens).set({ revokedAt: new Date() })
+      .where(and(eq(apiTokens.userId, r.user[0].id), eq(apiTokens.orgId, r.org.id), isNull(apiTokens.revokedAt)))
+      .returning({ prefix: apiTokens.prefix });
     const name = typeof req.body?.name === "string" && req.body.name.trim() ? req.body.name.trim().slice(0, 80) : "rotated";
     const minted = await mintToken(r.user[0].id, r.org.id, name);
+    audit(req, "token.rotated", minted.prefix, { revoked: revoked.map((t) => t.prefix), name });
     res.status(201).json({ ...minted, auth_header_example: `Authorization: Bearer ${minted.secret}` });
   });
 
@@ -107,8 +113,9 @@ export function registerTokenRoutes(app: Express) {
     const id = Number(req.params.id);
     if (!Number.isInteger(id)) return res.status(400).json({ error: "Bad token id" });
     const rows = await db.update(apiTokens).set({ revokedAt: new Date() })
-      .where(and(eq(apiTokens.id, id), eq(apiTokens.userId, r.user[0].id))).returning({ id: apiTokens.id });
+      .where(and(eq(apiTokens.id, id), eq(apiTokens.userId, r.user[0].id))).returning({ id: apiTokens.id, prefix: apiTokens.prefix });
     if (rows.length === 0) return res.status(404).json({ error: "Token not found" });
+    audit(req, "token.revoked", rows[0].prefix, { tokenId: id });
     res.json({ revoked: id });
   });
 }

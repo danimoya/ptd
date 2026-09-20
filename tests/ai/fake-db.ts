@@ -9,11 +9,11 @@
  * a fake that ignored the predicate would answer with the wrong card and the
  * test would prove nothing.
  */
-import { apps, orgIntegrations, streams, taskEvents, tasks, users } from "../../db/schema";
+import { aiUsage, apps, orgIntegrations, streams, taskEvents, tasks, users } from "../../db/schema";
 
 export type Row = Record<string, any>;
 
-type TableName = "tasks" | "streams" | "apps" | "users" | "task_events" | "org_integrations" | "other";
+type TableName = "tasks" | "streams" | "apps" | "users" | "task_events" | "org_integrations" | "ai_usage" | "other";
 
 function tableName(table: unknown): TableName {
   if (table === tasks) return "tasks";
@@ -22,6 +22,7 @@ function tableName(table: unknown): TableName {
   if (table === users) return "users";
   if (table === taskEvents) return "task_events";
   if (table === orgIntegrations) return "org_integrations";
+  if (table === aiUsage) return "ai_usage";
   return "other";
 }
 
@@ -90,6 +91,9 @@ class Chain implements PromiseLike<Row[]> {
   orderBy() {
     return this;
   }
+  groupBy() {
+    return this;
+  }
   leftJoin() {
     return this;
   }
@@ -126,6 +130,7 @@ export class FakeDb {
     users: [],
     task_events: [],
     org_integrations: [],
+    ai_usage: [],
     other: [],
   };
   selects: TableName[] = [];

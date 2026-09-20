@@ -19,7 +19,7 @@
 import { z } from "zod";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../../db";
-import { customers, entryTemplates, streams, timeEntries } from "../../db/schema";
+import { customers, entryTemplates, memberships, streams, timeEntries } from "../../db/schema";
 import { ActionError, defineAction, type ActionContext } from "./registry";
 import { hasRole } from "../types";
 import { getWebSocketManager } from "../websocket";
@@ -61,6 +61,27 @@ function ws() {
   return getWebSocketManager();
 }
 
+/**
+ * Where a finished entry starts its life in the approval workflow.
+ *
+ * A member whose membership carries `require_approval` — the setting an admin
+ * turns on for an external contractor — files hours that a manager has to sign
+ * off before they can be invoiced, so their entries open at `pending` rather than
+ * `none` the moment they are closed. Everyone else's stay at `none`, which means
+ * "no approval is asked of these" rather than "not yet approved".
+ *
+ * Breaks never enter the workflow: nobody approves a coffee.
+ */
+async function approvalOnWrite(ctx: ActionContext, isBreak: boolean): Promise<"none" | "pending"> {
+  if (isBreak) return "none";
+  const [row] = await db
+    .select({ requireApproval: memberships.requireApproval })
+    .from(memberships)
+    .where(and(eq(memberships.orgId, ctx.orgId), eq(memberships.userId, ctx.userId)))
+    .limit(1);
+  return row?.requireApproval ? "pending" : "none";
+}
+
 function timerPayload(entry: { id: number; checkIn: Date; isBreak: boolean; streamId: number | null; taskId: number | null; entrySource: string }) {
   return {
     entryId: entry.id,
@@ -92,6 +113,7 @@ async function insertEntry(
     notes?: string | null;
     refs: { taskId: number | null; streamId: number | null; customerId: number | null };
     metrics: { tokensUsed?: number | null; apiCostUsd?: number | null };
+    approvalStatus?: "none" | "pending";
   }
 ) {
   const attribution = attributionFor(ctx);
@@ -107,6 +129,7 @@ async function insertEntry(
       checkOut: args.checkOut ?? null,
       isBreak: args.isBreak,
       notes: args.notes ?? null,
+      ...(args.approvalStatus ? { approvalStatus: args.approvalStatus } : {}),
       ...attribution,
       ...args.metrics,
     })
@@ -227,10 +250,12 @@ defineAction({
       );
     }
     const metrics = agentMetricsFor(open.entrySource as EntrySource, args);
+    const approvalStatus = await approvalOnWrite(ctx, open.isBreak);
     const [row] = await db
       .update(timeEntries)
       .set({
         checkOut: now,
+        ...(approvalStatus === "pending" ? { approvalStatus } : {}),
         ...(args.notes !== undefined ? { notes: args.notes } : {}),
         ...metrics.values,
         updatedAt: now,
@@ -243,6 +268,7 @@ defineAction({
     return {
       entry: await viewEntry(ctx.orgId, row.id),
       minutes: entryMinutes(row.checkIn, row.checkOut),
+      approvalStatus: row.approvalStatus,
       ignored: metrics.ignored,
       ...(metrics.reason ? { ignoredReason: metrics.reason } : {}),
     };
@@ -295,12 +321,14 @@ defineAction({
       notes: args.notes,
       refs,
       metrics: metrics.values,
+      approvalStatus: await approvalOnWrite(ctx, args.isBreak ?? false),
     });
     ws()?.notifyDashboardUpdate(ctx.userId, { reason: "time_entry.log_past", entryId: row.id });
     recordTimeLogged(ctx, row);
     return {
       entry: await viewEntry(ctx.orgId, row.id),
       minutes: entryMinutes(row.checkIn, row.checkOut),
+      approvalStatus: row.approvalStatus,
       ignored: metrics.ignored,
       ...(metrics.reason ? { ignoredReason: metrics.reason } : {}),
     };
@@ -311,7 +339,7 @@ defineAction({
   name: "time_entry.update",
   title: "Correct an entry",
   description:
-    "Fix the times, attachments or note of an entry. Members may correct their own lines; manager and above may correct anyone's in the organization. Attribution is deliberately not editable: entry_source, agentLabel, tokensUsed and apiCostUsd cannot be changed after the fact, so the human-vs-agent record cannot be rewritten.",
+    "Fix the times, attachments or note of an entry. Members may correct their own lines; manager and above may correct anyone's in the organization. Attribution is deliberately not editable: entry_source, agentLabel, tokensUsed and apiCostUsd cannot be changed after the fact, so the human-vs-agent record cannot be rewritten. An entry already frozen into a certified invoice is refused outright — void the invoice first.",
   input: z.object({
     entryId: idIn("The entry to correct."),
     checkIn: whenIn("New start").optional(),
@@ -361,7 +389,8 @@ defineAction({
 defineAction({
   name: "time_entry.delete",
   title: "Strike an entry",
-  description: "Remove an entry from the ledger for good. Own entries for a member; any entry in the organization for manager and above.",
+  description:
+    "Remove an entry from the ledger for good. Own entries for a member; any entry in the organization for manager and above. An entry frozen into a certified invoice cannot be struck — void the invoice first, which releases it.",
   input: z.object({ entryId: idIn("The entry to strike.") }),
   requiredRole: "member",
   surface: "track",

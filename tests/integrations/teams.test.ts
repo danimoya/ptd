@@ -199,7 +199,7 @@ describe("identity", () => {
   });
 
   it("links with a code minted in this organization and binds the Entra object id", async () => {
-    const { code } = mintLinkCode(TEAMS_PROVIDER, { userId: 7, orgId: 3, displayName: "Dani" });
+    const { code } = await mintLinkCode(TEAMS_PROVIDER, { userId: 7, orgId: 3, displayName: "Dani" });
     const reply = await run(`<at>PTD</at> link ${code}`);
     expect(link).toHaveBeenCalledWith(7, "AAD-OBJ-1");
     expect(body(reply.reply)).toContain("Linked.");
@@ -207,7 +207,7 @@ describe("identity", () => {
   });
 
   it("refuses a code minted in another organization — Teams knows its org from the secret", async () => {
-    const { code } = mintLinkCode(TEAMS_PROVIDER, { userId: 7, orgId: 99, displayName: "Dani" });
+    const { code } = await mintLinkCode(TEAMS_PROVIDER, { userId: 7, orgId: 99, displayName: "Dani" });
     const reply = await run(`<at>PTD</at> link ${code}`);
     expect(link).not.toHaveBeenCalled();
     expect(body(reply.reply)).toContain("different PTD organization");

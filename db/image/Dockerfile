@@ -12,7 +12,11 @@ RUN set -eux; \
     grep "heliosdb-nano-v${NANO_VERSION}-${T}.tar.gz" SHA256SUMS | sha256sum -c -; \
     tar xzf "heliosdb-nano-v${NANO_VERSION}-${T}.tar.gz"; \
     install -m 0755 heliosdb-nano /usr/local/bin/heliosdb-nano; rm -rf /tmp/*
-RUN useradd -r -u 999 -m -d /home/heliosdb heliosdb && mkdir -p /data /tls && chown heliosdb:heliosdb /data /tls
+# /backups exists (and is owned by the database user) so that an empty named volume
+# mounted there inherits that ownership — the backup sidecar runs as uid 999 too and
+# would otherwise be handed a root-owned directory it cannot write to.
+RUN useradd -r -u 999 -m -d /home/heliosdb heliosdb && mkdir -p /data /tls /backups \
+    && chown heliosdb:heliosdb /data /tls /backups
 COPY entrypoint.sh /usr/local/bin/ptd-db-entrypoint
 RUN chmod 0755 /usr/local/bin/ptd-db-entrypoint
 USER heliosdb

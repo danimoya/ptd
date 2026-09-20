@@ -258,6 +258,27 @@ export async function ensureCustomer(
   return created.id;
 }
 
+/**
+ * `STRIPE_TAX_ENABLED=1` turns Stripe Tax on for Checkout. It is a switch rather
+ * than the default because Stripe Tax does nothing at all until the account has
+ * live tax registrations — and a flow that *looks* like it handles VAT while
+ * collecting none is worse than one that plainly does not.
+ *
+ * Switched on, four settings have to move together, which is why they live here
+ * and not in four places:
+ *   automatic_tax          Stripe computes the tax for each registration,
+ *   billing_address_collection=required   because the rate depends on where the
+ *                          customer is, and Stripe cannot guess,
+ *   tax_id_collection      so a business can enter a VAT/GST number and be
+ *                          reverse-charged instead of taxed,
+ *   customer_update[address]=auto   so the address the customer types is saved
+ *                          back onto the Customer — without it Stripe refuses the
+ *                          session, since it may not write what it just collected.
+ */
+export function taxEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.STRIPE_TAX_ENABLED === "1";
+}
+
 /** The exact Checkout Session request body. Pure, so a test can assert it. */
 export function checkoutParams(input: {
   orgId: number;
@@ -268,6 +289,7 @@ export function checkoutParams(input: {
 }): Record<string, unknown> {
   const env = input.env ?? process.env;
   const base = input.base ?? currentBaseUrl(env);
+  const tax = taxEnabled(env);
   return {
     mode: "subscription",
     customer: input.customerId,
@@ -277,9 +299,14 @@ export function checkoutParams(input: {
     success_url: billingReturnUrl({ checkout: "success", session_id: "{CHECKOUT_SESSION_ID}" }, env, base),
     cancel_url: billingReturnUrl({ checkout: "cancelled" }, env, base),
     allow_promotion_codes: true,
-    // Off deliberately: Stripe Tax collects nothing without an active registration,
-    // and a half-on setting looks like tax is handled when it is not.
-    automatic_tax: { enabled: false },
+    automatic_tax: { enabled: tax },
+    ...(tax
+      ? {
+          billing_address_collection: "required",
+          tax_id_collection: { enabled: true },
+          customer_update: { address: "auto" },
+        }
+      : {}),
     subscription_data: { metadata: { orgId: String(input.orgId), product: "ptd-hosted" } },
     metadata: { orgId: String(input.orgId) },
     integration_identifier: INTEGRATION_IDENTIFIER,

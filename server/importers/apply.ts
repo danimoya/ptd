@@ -27,10 +27,11 @@
  * webhooks — one `import.completed` event goes out at the end instead.
  */
 
-import { and, eq, gte, lte } from "drizzle-orm";
+import { and, desc, eq, gte, lte } from "drizzle-orm";
 import { db } from "../../db";
 import {
   customers,
+  importRuns,
   memberships,
   priorityScore,
   streams,
@@ -352,7 +353,7 @@ export async function commit(args: ImportArgs, ctx: ActionContext): Promise<Comm
   if (prepared.kind === "task") await commitTasks(prepared, args, ctx, index, result);
   else await commitEntries(prepared, args, ctx, index, result);
 
-  recordRun(ctx, result);
+  await recordRun(ctx, result);
   try {
     await dispatchWebhooks(ctx.orgId, {
       kind: "import.completed",
@@ -701,8 +702,15 @@ function entryPreviewValues(entry: NormalisedEntry, resolved: ResolvedEntry): Re
   };
 }
 
-/* ── History (per process, per org) ──────────────────────────────────── */
+/* ── History (one `import_runs` row per commit) ──────────────────────── */
 
+/**
+ * An import log is worth a row: a manager who re-imports a Jira export on Monday
+ * wants to see Friday's run, and with more than one app replica the run they are
+ * looking for was very likely committed by the other one. `warnings` carries the
+ * run's warnings and any per-row errors, prefixed `error:`, so the column that
+ * matters for "what went wrong" is not lost to a restart either.
+ */
 export interface ImportRun {
   at: string;
   source: Source;
@@ -711,38 +719,67 @@ export interface ImportRun {
   created: number;
   updated: number;
   skipped: number;
-  streamsCreated: string[];
-  customersCreated: string[];
+  warnings: string[];
   errors: number;
 }
 
 const HISTORY_LIMIT = 20;
-const history = new Map<number, ImportRun[]>();
+const STORED_WARNINGS = 40;
 
-function recordRun(ctx: ActionContext, result: CommitResult): void {
-  const runs = history.get(ctx.orgId) ?? [];
-  runs.unshift({
-    at: result.at,
-    source: result.source,
-    kind: result.kind,
-    by: actorLabel(ctx),
-    created: result.created,
-    updated: result.updated,
-    skipped: result.skipped,
-    streamsCreated: result.streamsCreated,
-    customersCreated: result.customersCreated,
-    errors: result.errors.length,
+async function recordRun(ctx: ActionContext, result: CommitResult): Promise<void> {
+  const warnings = [...result.errors.map((e) => `error: ${e}`), ...result.warnings].slice(0, STORED_WARNINGS);
+  try {
+    await db.insert(importRuns).values({
+      orgId: ctx.orgId,
+      userId: ctx.userId,
+      source: result.source,
+      created: result.created,
+      updated: result.updated,
+      skipped: result.skipped,
+      warnings,
+      createdAt: new Date(result.at),
+    });
+  } catch (error) {
+    // The import itself already succeeded; losing its log entry must not undo it.
+    console.error("[import] could not record the run:", message(error));
+  }
+}
+
+/** The organization's recent imports, newest first — every replica's, not this one's. */
+export async function runsFor(orgId: number, limit = HISTORY_LIMIT): Promise<ImportRun[]> {
+  const rows = await db
+    .select({
+      at: importRuns.createdAt,
+      source: importRuns.source,
+      created: importRuns.created,
+      updated: importRuns.updated,
+      skipped: importRuns.skipped,
+      warnings: importRuns.warnings,
+      displayName: users.displayName,
+      userId: importRuns.userId,
+      isAgent: users.isAgent,
+    })
+    .from(importRuns)
+    .leftJoin(users, eq(users.id, importRuns.userId))
+    .where(eq(importRuns.orgId, orgId))
+    .orderBy(desc(importRuns.createdAt))
+    .limit(limit);
+
+  return rows.map((row) => {
+    const warnings = row.warnings ?? [];
+    const source = row.source as Source;
+    return {
+      at: new Date(row.at).toISOString(),
+      source,
+      kind: isTaskSource(source) ? ("task" as ImportKind) : ("time" as ImportKind),
+      by: row.displayName ? `${row.displayName}${row.isAgent ? " (agent)" : ""}` : row.userId ? `user ${row.userId}` : "(deleted user)",
+      created: row.created,
+      updated: row.updated,
+      skipped: row.skipped,
+      warnings: warnings.filter((w) => !w.startsWith("error: ")),
+      errors: warnings.filter((w) => w.startsWith("error: ")).length,
+    };
   });
-  history.set(ctx.orgId, runs.slice(0, HISTORY_LIMIT));
-}
-
-export function runsFor(orgId: number): ImportRun[] {
-  return history.get(orgId) ?? [];
-}
-
-/** Test seam — the list is process-local by design, so it needs a reset. */
-export function clearHistory(): void {
-  history.clear();
 }
 
 /* ── Small utilities ─────────────────────────────────────────────────── */

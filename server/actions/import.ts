@@ -97,24 +97,24 @@ export const importHistory = defineAction({
   name: "import.history",
   title: "Recent imports",
   description:
-    "The imports committed in this organization since the server last started, newest first, plus the all-time count of task rows " +
-    "written by an import (task_events with via=import and an import: note), which does survive a restart.",
+    "The last 20 imports committed in this organization, newest first, from the import_runs table — every replica's runs, and they " +
+    "survive a restart. Plus the all-time count of task rows written by an import (task_events with via=import and an import: note).",
   input: z.object({}),
   requiredRole: "manager",
   surface: "org",
   handler: async (_args, ctx) => {
-    const runs = runsFor(ctx.orgId);
-    // The run list is process-local on purpose — an import log is not worth a
-    // table — so the durable number comes from the history rows themselves. It
-    // matches on the note prefix as well as `via`, because the demo seeder also
-    // writes via="import" and those rows are not imports anyone performed.
+    const runs = await runsFor(ctx.orgId);
+    // The all-time number comes from the history rows rather than from import_runs
+    // because it predates that table. It matches on the note prefix as well as
+    // `via`, because the demo seeder also writes via="import" and those rows are
+    // not imports anyone performed.
     const rows = await db
       .select({ id: taskEvents.id })
       .from(taskEvents)
       .where(and(eq(taskEvents.orgId, ctx.orgId), eq(taskEvents.via, "import"), like(taskEvents.note, "import:%")));
     return {
       runs,
-      note: runs.length === 0 ? "No imports since this server started." : undefined,
+      note: runs.length === 0 ? "No imports recorded in this organization yet." : undefined,
       taskEventsViaImport: rows.length,
       sources: MAPPERS.map((m) => ({ source: m.source, kind: m.kind, label: m.label, hint: m.hint })),
     };

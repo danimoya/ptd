@@ -40,6 +40,10 @@ export const entryView = {
   agentLabel: timeEntries.agentLabel,
   tokensUsed: timeEntries.tokensUsed,
   apiCostUsd: timeEntries.apiCostUsd,
+  approvalStatus: timeEntries.approvalStatus,
+  approvedAt: timeEntries.approvedAt,
+  approvedBy: timeEntries.approvedBy,
+  lockedInvoiceId: timeEntries.lockedInvoiceId,
 } as const;
 
 export function selectEntries(where: SQL | undefined, limit: number) {
@@ -170,7 +174,16 @@ export function endOfDay(d = new Date()): Date {
 
 /* ── Permissions ─────────────────────────────────────────────────────── */
 
-/** member+ acts on its own ledger; manager+ may act on anyone's in the org. */
+/**
+ * member+ acts on its own ledger; manager+ may act on anyone's in the org.
+ *
+ * An entry frozen into a certified invoice is refused outright, whatever the
+ * caller's role. That is the whole point of certification: the verification URL on
+ * an invoice promises the hours behind it have not moved, and a promise that an
+ * admin can quietly break is not one. Correcting a billed hour means voiding the
+ * invoice first (`invoice.void`), which unlocks the rows and withdraws the
+ * document — visibly, with a reason — rather than editing underneath it.
+ */
 export async function entryForWrite(ctx: ActionContext, entryId: number, canReachOthers: boolean): Promise<EntryRow> {
   const [row] = await db
     .select()
@@ -180,6 +193,12 @@ export async function entryForWrite(ctx: ActionContext, entryId: number, canReac
   if (!row) throw new ActionError("not_found", `Time entry ${entryId} not found`);
   if (row.userId !== ctx.userId && !canReachOthers) {
     throw new ActionError("forbidden", "That entry belongs to another member; manager or above is required to change it");
+  }
+  if (row.lockedInvoiceId) {
+    throw new ActionError(
+      "conflict",
+      `Entry ${entryId} is frozen into certified invoice ${row.lockedInvoiceId} and cannot be changed or struck. Void that invoice first (invoice.void) — the entries it locked are released, and the document itself goes on verifying as withdrawn.`
+    );
   }
   return row;
 }

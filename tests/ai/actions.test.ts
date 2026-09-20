@@ -306,23 +306,40 @@ describe("task.suggest_priority_batch", () => {
 });
 
 describe("ai.usage", () => {
-  it("adds up what this process has spent, by model and by action", async () => {
+  it("writes one ai_usage row per provider call, billed to the caller's organization", async () => {
+    configure();
+    await runAction("task.suggest_priority", { taskId: 7 }, ctx());
+    await runAction("task.suggest_priority_batch", { limit: 1 }, ctx());
+    // The insert is fire-and-forget on the suggestion path; let it land.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const ledger = fakeDb.inserts.filter((i) => i.table === "ai_usage").map((i) => i.values);
+    expect(ledger).toHaveLength(2);
+    expect(ledger[0]).toMatchObject({ orgId: ORG_ID, userId: 1, provider: "anthropic", model: "claude-haiku-4-5", action: "task.suggest_priority" });
+    expect(ledger[1]).toMatchObject({ action: "task.suggest_priority_batch" });
+    expect(ledger[0].inputTokens).toBeGreaterThan(0);
+  });
+
+  it("still reports what this process spent, by model and by action", async () => {
     configure();
     await runAction("task.suggest_priority", { taskId: 7 }, ctx());
     await runAction("task.suggest_priority_batch", { limit: 1 }, ctx());
 
     const usage = (await runAction("ai.usage", {}, ctx("admin"))) as Record<string, any>;
-    expect(usage).toMatchObject({ provider: "anthropic", model: "claude-haiku-4-5", calls: 2, failures: 0, unpriced: 0, windowSize: 500, truncated: false });
-    expect(usage.inputTokens).toBe(1240);
-    expect(usage.costUsd).toBeCloseTo(0.00214, 8);
-    expect(usage.byModel).toEqual([expect.objectContaining({ model: "claude-haiku-4-5", calls: 2 })]);
-    expect(usage.byLabel.map((b: any) => b.label).sort()).toEqual(["task.suggest_priority", "task.suggest_priority_batch"]);
+    expect(usage).toMatchObject({ provider: "anthropic", model: "claude-haiku-4-5", days: 30 });
+    const mine = usage.thisProcess;
+    expect(mine).toMatchObject({ calls: 2, failures: 0, unpriced: 0, windowSize: 500, truncated: false });
+    expect(mine.inputTokens).toBe(1240);
+    expect(mine.costUsd).toBeCloseTo(0.00214, 8);
+    expect(mine.byModel).toEqual([expect.objectContaining({ model: "claude-haiku-4-5", calls: 2 })]);
+    expect(mine.byLabel.map((b: any) => b.label).sort()).toEqual(["task.suggest_priority", "task.suggest_priority_batch"]);
   });
 
   it("starts empty, and never leaks the key", async () => {
     configure();
     const usage = (await runAction("ai.usage", {}, ctx("admin"))) as Record<string, any>;
-    expect(usage).toMatchObject({ calls: 0, costUsd: 0, firstAt: null, lastAt: null });
+    expect(usage).toMatchObject({ calls: 0, costUsd: 0, byDay: [], byUser: [], byModel: [] });
+    expect(usage.thisProcess).toMatchObject({ calls: 0, firstAt: null, lastAt: null });
     expect(JSON.stringify(usage)).not.toContain("sk-stub-key");
   });
 });

@@ -7,8 +7,9 @@ import { memberships, type Role } from "../db/schema";
 import { verifyApiToken } from "./tokens";
 import { actionsFor, runAction, ActionError, type ActionContext } from "./actions";
 import { isRole } from "./types";
-import { baseUrl } from "./discovery";
+import { baseUrl, corsHeaders } from "./discovery";
 import { wwwAuthenticate } from "./oauth/metadata";
+import { recordAction } from "./metrics/http";
 
 /** One MCP server per request (stateless Streamable HTTP), exposing only the actions the caller's role allows. */
 export function buildMcpForContext(ctx: ActionContext): McpServer {
@@ -29,8 +30,12 @@ export function buildMcpForContext(ctx: ActionContext): McpServer {
       async (args: unknown) => {
         try {
           const result = await runAction(def.name, args, ctx);
+          recordAction(def.name, "mcp", "ok");
           return { content: [{ type: "text" as const, text: JSON.stringify(result ?? null) }] };
         } catch (err) {
+          // A role gate or a bad argument is the caller's mistake ("refused"); anything
+          // else is ours, and the two should not share a line on a dashboard.
+          recordAction(def.name, "mcp", err instanceof ActionError ? "refused" : "error");
           const message = err instanceof ActionError ? `${err.code}: ${err.message}` : (err as Error).message;
           return { isError: true, content: [{ type: "text" as const, text: message }] };
         }
@@ -41,7 +46,19 @@ export function buildMcpForContext(ctx: ActionContext): McpServer {
 }
 
 export function registerMcp(app: Express) {
+  /**
+   * Browser-based MCP clients fetch this endpoint straight from a page, so the
+   * preflight has to be answered and the response has to name `WWW-Authenticate` as
+   * a readable header — that is how a connector discovers it must go and get a token
+   * (see server/oauth/routes.ts for the rest of that dance).
+   */
+  app.options("/mcp", (_req: Request, res: Response) => {
+    corsHeaders(res, "POST, OPTIONS");
+    res.status(204).end();
+  });
+
   app.post("/mcp", async (req: Request, res: Response) => {
+    corsHeaders(res, "POST, OPTIONS");
     const auth = await verifyApiToken(req.header("Authorization"));
     if (!auth) {
       // RFC 9728 / MCP authorization: point the client at the protected-resource

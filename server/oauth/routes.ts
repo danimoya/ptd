@@ -15,27 +15,38 @@
  * same-origin and deliberately does not.
  */
 import type { Express, Request, Response, NextFunction } from "express";
+import rateLimit from "express-rate-limit";
 import { auth } from "../auth";
 import { heavyLimiter } from "../rate-limit";
+import { corsHeaders } from "../discovery";
 import { handleAuthorize, handleClientInfo, handleDecision } from "./authorize";
 import { authorizationServerMetadata, protectedResourceMetadata } from "./metadata";
 import { handleRegister } from "./register";
 import { handleRevoke, handleToken } from "./token";
 
 /** Public, unauthenticated, cacheable-by-nobody: the classic metadata CORS shape. */
-function allowCors(res: Response) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, MCP-Protocol-Version");
-  res.setHeader("Access-Control-Expose-Headers", "WWW-Authenticate");
-  res.setHeader("Access-Control-Max-Age", "86400");
-}
-
 function cors(req: Request, res: Response, next: NextFunction) {
-  allowCors(res);
+  corsHeaders(res, "GET, POST, OPTIONS");
   if (req.method === "OPTIONS") return res.status(204).end();
   next();
 }
+
+/**
+ * 60 a minute per IP on the two endpoints anyone can reach without a credential.
+ *
+ * `authLimiter`'s 20-per-15-minutes is right for a login form and wrong here: a
+ * connector legitimately posts to /oauth/token on every refresh, and several people
+ * behind one office NAT would trip it. 60/min still turns a code-guessing or
+ * registration-spam loop into a pointless exercise, and the endpoints answer with
+ * OAuth's own JSON error shape rather than express-rate-limit's default.
+ */
+const oauthLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "temporarily_unavailable", error_description: "Too many requests. Try again in a minute." },
+});
 
 export function registerOAuthRoutes(app: Express) {
   /* ── discovery (RFC 9728 + RFC 8414) ── */
@@ -56,7 +67,9 @@ export function registerOAuthRoutes(app: Express) {
 
   /* ── dynamic client registration (RFC 7591) ── */
   app.options("/oauth/register", cors);
-  app.post("/oauth/register", cors, heavyLimiter, handleRegister);
+  // Both limiters: registration keeps its stricter 10/min, and the 60/min layer is
+  // there so the two open endpoints answer the same way when someone hammers them.
+  app.post("/oauth/register", cors, oauthLimiter, heavyLimiter, handleRegister);
 
   /* ── authorization endpoint + the SPA consent screen's own API ── */
   app.get("/oauth/authorize", handleAuthorize);
@@ -65,7 +78,7 @@ export function registerOAuthRoutes(app: Express) {
 
   /* ── token + revocation (RFC 6749 §4.1.3 / §6, RFC 7009) ── */
   app.options("/oauth/token", cors);
-  app.post("/oauth/token", cors, handleToken);
+  app.post("/oauth/token", cors, oauthLimiter, handleToken);
   app.options("/oauth/revoke", cors);
-  app.post("/oauth/revoke", cors, handleRevoke);
+  app.post("/oauth/revoke", cors, oauthLimiter, handleRevoke);
 }

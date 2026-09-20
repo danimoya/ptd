@@ -241,9 +241,10 @@ function switchOrg(message: TelegramMessage, caller: Extract<TelegramResolution,
   if (!target) {
     return errorReply(`You are not a member of organization ${orgId}.`, [`yours are ${caller.orgs.map((o) => o.orgId).join(", ")}`]);
   }
-  rememberOrgChoice(message.fromId ?? "", orgId);
+  // Fire-and-forget: the write never rejects (it logs), and the reply is already composed.
+  void rememberOrgChoice(message.fromId ?? "", orgId);
   return ephemeral(
     [`*Now acting on ${escape(target.name)}* as *${target.role}*.`],
-    ["kept until this PTD server restarts, then your oldest organization comes back"],
+    ["kept on your linked identity — it survives a restart; `/org` again to change it"],
   );
 }

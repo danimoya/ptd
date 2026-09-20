@@ -13,65 +13,72 @@ import {
   resetLinkState,
 } from "../../server/integrations/slack/linkCodes";
 
+/**
+ * The codes live in `link_codes` now, so every function that touches one is async.
+ * `resetLinkState()` installs the in-memory store, which satisfies the same contract
+ * as the table (tests/scale/durable.test.ts checks that claim-once behaviour against
+ * the store interface directly).
+ */
+
 const user = { userId: 7, orgId: 3, displayName: "Dani" };
 
 beforeEach(() => resetLinkState());
 
 describe("mintLinkCode", () => {
-  it("mints a six-character code from an unambiguous alphabet", () => {
-    const { code, ttlMinutes } = mintLinkCode(user);
+  it("mints a six-character code from an unambiguous alphabet", async () => {
+    const { code, ttlMinutes } = await mintLinkCode(user);
     expect(code).toHaveLength(LINK_CODE_LENGTH);
     expect(code).toMatch(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/);
     expect(code).not.toMatch(/[IO01]/);
     expect(ttlMinutes).toBe(10);
   });
 
-  it("carries the expiry and the identity it is for", () => {
+  it("carries the expiry and the identity it is for", async () => {
     const now = 1_700_000_000_000;
-    const { code, expiresAt } = mintLinkCode(user, now);
+    const { code, expiresAt } = await mintLinkCode(user, now);
     expect(expiresAt.getTime()).toBe(now + LINK_CODE_TTL_MS);
-    expect(peekLinkCode(code, now)).toMatchObject({ userId: 7, orgId: 3, displayName: "Dani" });
+    await expect(peekLinkCode(code, now)).resolves.toMatchObject({ userId: 7, orgId: 3, displayName: "Dani" });
   });
 
-  it("replaces the caller's previous code, so only the newest one works", () => {
-    const first = mintLinkCode(user).code;
-    const second = mintLinkCode(user).code;
+  it("replaces the caller's previous code, so only the newest one works", async () => {
+    const first = (await mintLinkCode(user)).code;
+    const second = (await mintLinkCode(user)).code;
     expect(first).not.toBe(second);
-    expect(peekLinkCode(first)).toBeNull();
-    expect(peekLinkCode(second)).not.toBeNull();
+    await expect(peekLinkCode(first)).resolves.toBeNull();
+    await expect(peekLinkCode(second)).resolves.not.toBeNull();
   });
 
-  it("keeps other people's codes", () => {
-    const mine = mintLinkCode(user).code;
-    const theirs = mintLinkCode({ userId: 8, orgId: 3, displayName: "Sam" }).code;
-    expect(peekLinkCode(mine)).not.toBeNull();
-    expect(peekLinkCode(theirs)).not.toBeNull();
+  it("keeps other people's codes", async () => {
+    const mine = (await mintLinkCode(user)).code;
+    const theirs = (await mintLinkCode({ userId: 8, orgId: 3, displayName: "Sam" })).code;
+    await expect(peekLinkCode(mine)).resolves.not.toBeNull();
+    await expect(peekLinkCode(theirs)).resolves.not.toBeNull();
   });
 });
 
 describe("consumeLinkCode", () => {
-  it("works exactly once", () => {
-    const { code } = mintLinkCode(user);
-    expect(consumeLinkCode(code)).toMatchObject({ userId: 7 });
-    expect(consumeLinkCode(code)).toBeNull();
+  it("works exactly once", async () => {
+    const { code } = await mintLinkCode(user);
+    await expect(consumeLinkCode(code)).resolves.toMatchObject({ userId: 7 });
+    await expect(consumeLinkCode(code)).resolves.toBeNull();
   });
 
-  it("is case- and punctuation-insensitive about what the user typed", () => {
-    const { code } = mintLinkCode(user);
+  it("is case- and punctuation-insensitive about what the user typed", async () => {
+    const { code } = await mintLinkCode(user);
     expect(normaliseCode(` ${code.toLowerCase()}-`)).toBe(code);
-    expect(consumeLinkCode(` ${code.toLowerCase()} `)).toMatchObject({ userId: 7 });
+    await expect(consumeLinkCode(` ${code.toLowerCase()} `)).resolves.toMatchObject({ userId: 7 });
   });
 
-  it("expires after ten minutes", () => {
+  it("expires after ten minutes", async () => {
     const now = 1_700_000_000_000;
-    const { code } = mintLinkCode(user, now);
-    expect(peekLinkCode(code, now + LINK_CODE_TTL_MS - 1)).not.toBeNull();
-    expect(consumeLinkCode(code, now + LINK_CODE_TTL_MS + 1)).toBeNull();
+    const { code } = await mintLinkCode(user, now);
+    await expect(peekLinkCode(code, now + LINK_CODE_TTL_MS - 1)).resolves.not.toBeNull();
+    await expect(consumeLinkCode(code, now + LINK_CODE_TTL_MS + 1)).resolves.toBeNull();
   });
 
-  it("returns null for a code nobody minted", () => {
-    expect(consumeLinkCode("ZZZZZZ")).toBeNull();
-    expect(consumeLinkCode("")).toBeNull();
+  it("returns null for a code nobody minted", async () => {
+    await expect(consumeLinkCode("ZZZZZZ")).resolves.toBeNull();
+    await expect(consumeLinkCode("")).resolves.toBeNull();
   });
 });
 

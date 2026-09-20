@@ -66,7 +66,7 @@ defineAction({
       linked: identities.length > 0,
       telegramUserId: identities[0] ?? null,
       /** Which organization this caller's Telegram `/org` choice currently points at. */
-      selectedOrgId: identities[0] ? orgChoiceOf(identities[0]) : null,
+      selectedOrgId: identities[0] ? await orgChoiceOf(identities[0]) : null,
     };
   },
 });
@@ -141,7 +141,7 @@ defineAction({
   surface: "org",
   handler: async (_args, ctx) => {
     const row = await requireRegistration(ctx.orgId);
-    const minted = mintLinkCode(TELEGRAM_PROVIDER, { userId: ctx.userId, orgId: ctx.orgId, displayName: ctx.displayName });
+    const minted = await mintLinkCode(TELEGRAM_PROVIDER, { userId: ctx.userId, orgId: ctx.orgId, displayName: ctx.displayName });
     return {
       code: minted.code,
       command: `/link ${minted.code}`,

@@ -22,11 +22,17 @@ import { registerReportsRoutes } from "./track/reportsRoutes";
 import { registerGithubRoutes } from "./integrations/github/routes";
 import { registerTelegramRoutes } from "./integrations/telegram/routes";
 import { registerTeamsRoutes } from "./integrations/teams/routes";
+import { registerContactRoutes } from "./contact";
+import { registerObservability } from "./metrics/health";
 import "./actions";
 
 export function registerRoutes(app: Express) {
   const httpServer = createServer(app);
-  app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
+  // Health and metrics go up before the /api limiter: a monitor polling health every
+  // few seconds and Prometheus scraping every fifteen must not spend the API budget
+  // of whatever address they happen to share. `/api/health` alone stays shallow (the
+  // image's HEALTHCHECK polls it); `?deep=1` adds the database.
+  registerObservability(app);
   app.use("/api", apiLimiter);
   initializeWebSocket(httpServer);
   registerAuthRoutes(app);
@@ -49,5 +55,6 @@ export function registerRoutes(app: Express) {
   registerGithubRoutes(app);
   registerTelegramRoutes(app);
   registerTeamsRoutes(app);
+  registerContactRoutes(app);
   return httpServer;
 }

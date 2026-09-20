@@ -16,9 +16,11 @@ import { SLACK_PROVIDER } from "../shared/providers";
  * One-time codes that bind a Slack user to a PTD user.
  *
  * The store moved to `../shared/linkCodes` when Telegram and Teams arrived — same
- * ten-minute, single-use, in-memory codes, now keyed by provider so a Telegram code
- * cannot be spent in Slack. This module is the Slack-flavoured door onto it: every
- * function here is the shared one with `provider = "slack"` already filled in.
+ * ten-minute, single-use codes, now kept in the `link_codes` table and keyed by
+ * provider so a Telegram code cannot be spent in Slack. This module is the
+ * Slack-flavoured door onto it: every function here is the shared one with
+ * `provider = "slack"` already filled in, which is why the code-handling functions
+ * return promises.
  */
 
 export {
@@ -30,15 +32,19 @@ export {
   type MintedLinkCode,
 } from "../shared/linkCodes";
 
-export const pruneLinkCodes = (now?: number): void => pruneShared(SLACK_PROVIDER, now);
+export const pruneLinkCodes = (now?: number): Promise<void> => pruneShared(SLACK_PROVIDER, now);
 
 /** A fresh code for one PTD user in one org. Any previous Slack code of theirs is dropped. */
-export const mintLinkCode = (input: { userId: number; orgId: number; displayName: string }, now?: number): MintedLinkCode =>
-  mintShared(SLACK_PROVIDER, input, now);
+export const mintLinkCode = (
+  input: { userId: number; orgId: number; displayName: string },
+  now?: number,
+): Promise<MintedLinkCode> => mintShared(SLACK_PROVIDER, input, now);
 
-export const peekLinkCode = (raw: string, now?: number): LinkCodeEntry | null => peekShared(SLACK_PROVIDER, raw, now);
+export const peekLinkCode = (raw: string, now?: number): Promise<LinkCodeEntry | null> =>
+  peekShared(SLACK_PROVIDER, raw, now);
 
-export const consumeLinkCode = (raw: string, now?: number): LinkCodeEntry | null => consumeShared(SLACK_PROVIDER, raw, now);
+export const consumeLinkCode = (raw: string, now?: number): Promise<LinkCodeEntry | null> =>
+  consumeShared(SLACK_PROVIDER, raw, now);
 
 export const recordLinkFailure = (key: string, now?: number): { failures: number; blocked: boolean } =>
   recordShared(SLACK_PROVIDER, key, now);

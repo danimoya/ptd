@@ -48,6 +48,7 @@ vi.mock("../../server/integrations/slack/identity", () => ({
 
 const { normaliseChannelId } = await import("../../server/actions/slack");
 const { ActionError, getAction, runAction } = await import("../../server/actions/registry");
+const { resetLinkState } = await import("../../server/integrations/shared/linkCodes");
 
 const ctxFor = (role: Role = "admin"): ActionContext => ({
   userId: 7,
@@ -61,6 +62,8 @@ const ctxFor = (role: Role = "admin"): ActionContext => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Link codes live in `link_codes`; the in-memory store keeps this suite database-free.
+  resetLinkState();
   process.env.SLACK_CLIENT_ID = "1234.5678";
   process.env.SLACK_CLIENT_SECRET = "shh";
   process.env.SLACK_SIGNING_SECRET = "testsecret";

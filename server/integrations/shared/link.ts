@@ -13,9 +13,10 @@ import {
  *
  * The rules are identical wherever the code is typed — ten minutes, one use, ten bad
  * guesses per account and then a cool-off — and the differences are all wording, so
- * they are parameters rather than a second copy of the flow. Nothing here writes to
- * the database: the caller supplies `link`, because what an `externalId` means is the
- * adapter's business.
+ * they are parameters rather than a second copy of the flow. The code itself is read
+ * and spent in the `link_codes` table (one guarded UPDATE, so a code works exactly
+ * once even with several app replicas); the identity row is the caller's job, because
+ * what an `externalId` means is the adapter's business.
  */
 
 export interface LinkFlow {
@@ -67,7 +68,7 @@ export async function runLinkFlow(flow: LinkFlow): Promise<LinkOutcome> {
     return fail(errorReply(`Give me the code: \`${flow.example}\`.`, [`mint one in ${flow.mintPath}`]));
   }
 
-  const peeked = peekLinkCode(flow.provider, flow.code, flow.now);
+  const peeked = await peekLinkCode(flow.provider, flow.code, flow.now);
   if (!peeked) {
     const { failures } = recordLinkFailure(flow.provider, flow.accountKey, flow.now);
     return fail(
@@ -83,7 +84,7 @@ export async function runLinkFlow(flow: LinkFlow): Promise<LinkOutcome> {
     );
   }
 
-  const entry = consumeLinkCode(flow.provider, flow.code, flow.now);
+  const entry = await consumeLinkCode(flow.provider, flow.code, flow.now);
   if (!entry) {
     recordLinkFailure(flow.provider, flow.accountKey, flow.now);
     return fail(errorReply("That code expired while we were looking at it — mint a fresh one."));

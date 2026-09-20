@@ -215,7 +215,7 @@ describe("POST /commands — workspace and identity", () => {
   });
 
   it("links an account with a minted code, without needing it to be linked first", async () => {
-    const { code } = mintLinkCode({ userId: 7, orgId: 3, displayName: "Dani" });
+    const { code } = await mintLinkCode({ userId: 7, orgId: 3, displayName: "Dani" });
     const res = await post(slashBody(`link ${code}`));
     expect(res.status).toBe(200);
     expect(stubs.linkSlackIdentity).toHaveBeenCalledWith(7, "T1", "U1");

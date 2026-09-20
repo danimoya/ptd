@@ -28,6 +28,14 @@ interface CascadeBatch {
 }
 
 const cascadeBatches = new Map<number, CascadeBatch>();
+/**
+ * `<orgId>:<streamId>` → when that stream was last alerted, and when it was last
+ * swept. Both are per replica, deliberately: they throttle a courtesy message, and
+ * the worst a second replica can do is post the same "budget exceeded" line once
+ * more within the 12-hour window. Making them durable would mean a write on every
+ * event fan-out to spare Slack a duplicate — see docs/self-hosting.md, "Running
+ * more than one app replica".
+ */
 const budgetAlertedAt = new Map<string, number>();
 const lastBudgetSweep = new Map<number, number>();
 
@@ -227,7 +235,7 @@ async function sweepBudgets(orgId: number): Promise<void> {
 /**
  * Post one alert per stream whose agent spend has passed its budget. Each stream is
  * alerted at most once every 12 hours unless `force` is set (what `slack.check_budgets`
- * and the Org UI's test button use).
+ * and the Org UI's test button use) — per app replica, see the cooldown map above.
  */
 export async function checkStreamBudgets(orgId: number, opts: { force?: boolean; now?: number } = {}): Promise<BudgetSweep> {
   const now = opts.now ?? Date.now();

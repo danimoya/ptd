@@ -42,10 +42,43 @@ services:
     depends_on: [ptd-db]
     networks: [ptd-internal]
 
+  # Nightly dumps, off unless you ask for them:
+  #   docker compose --profile backup up -d ptd-backup
+  #
+  # Same image as the database, so the dump is written by exactly the engine that
+  # wrote the data. It mounts the data volume read-only, copies it, dumps the copy
+  # and deletes the copy — HeliosDB-Nano 4.40 cannot dump a directory the server has
+  # open, and its own --dump-schedule is not implemented yet (the script's header has
+  # the verbatim messages). Nothing is stopped and nothing is written to /data.
+  #
+  # `scripts/restore.sh --input <file> --scratch --yes` rehearses a restore into a
+  # throwaway container; docs/self-hosting.md walks through it.
+  ptd-backup:
+    profiles: [backup]
+    image: ptd-db:${NANO_VERSION:-4.40.0}
+    container_name: ptd-backup
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/usr/local/bin/ptd-backup", "--cron"]
+    environment:
+      BACKUP_DIR: /backups
+      BACKUP_CRON: ${BACKUP_CRON:-17 3 * * *}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      BACKUP_COMPRESSION: ${BACKUP_COMPRESSION:-gzip}
+      BACKUP_VERIFY: ${BACKUP_VERIFY:-0}
+    volumes:
+      - ./scripts/backup.sh:/usr/local/bin/ptd-backup:ro
+      - ptd_db_data:/data:ro
+      - ptd_db_tls:/tls:ro
+      - ptd_files:/files:ro
+      - ptd_backups:/backups
+    depends_on: [ptd-db]
+    networks: [ptd-internal]
+
 volumes:
   ptd_db_data:
   ptd_db_tls:
   ptd_files:
+  ptd_backups:
 
 networks:
   ptd-internal:

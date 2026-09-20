@@ -78,7 +78,7 @@ defineAction({
   surface: "org",
   handler: async (_args, ctx) => {
     const row = await requireInstall(ctx.orgId);
-    const minted = mintLinkCode({ userId: ctx.userId, orgId: ctx.orgId, displayName: ctx.displayName });
+    const minted = await mintLinkCode({ userId: ctx.userId, orgId: ctx.orgId, displayName: ctx.displayName });
     return {
       code: minted.code,
       command: `/ptd link ${minted.code}`,
