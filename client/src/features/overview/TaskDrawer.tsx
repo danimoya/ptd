@@ -1,8 +1,11 @@
+// Classic JSX transform (tsconfig keeps jsx: "preserve"), so React must be in scope.
+import React from "react";
 import { Link } from "react-router-dom";
 import { ExternalLink, GanttChartSquare, Bot, X } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
-import { bandChipClass, formatDay, formatMinutes, isOverdue, STATUS_LABEL, statusChipClass } from "./format";
+import { bandChipClass, formatDay, formatMinutes, isOverdue, prioritySourceChipClass, prioritySourceLabel, prioritySourceTitle, STATUS_LABEL, statusChipClass } from "./format";
+import SuggestPriorityPanel from "./ai/SuggestPriorityPanel";
 import type { NextTaskResult, TaskRow } from "./types";
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -25,11 +28,18 @@ export default function TaskDrawer({
   why,
   open,
   onOpenChange,
+  onTaskUpdated,
 }: {
   task: TaskRow | null;
   why?: NextTaskResult["why"];
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * Called with the fields an accepted AI suggestion changed, so the caller can
+   * refresh its own copy of the row. Optional: a caller that does not own a list
+   * (or has AI switched off) can leave it out.
+   */
+  onTaskUpdated?: (patch: Partial<TaskRow>) => void;
 }) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -62,10 +72,17 @@ export default function TaskDrawer({
                 <b className={cn(bandChipClass(task.priorityScore), "border-0 bg-transparent p-0")}>{task.priorityScore}</b>
               </div>
               {task.prioritySource !== "formula" ? (
-                <p className="text-xs font-serif italic text-ink-muted mt-1">Set by hand ({task.prioritySource}){task.priorityNote ? ` — ${task.priorityNote}` : ""}</p>
+                <p className="text-xs font-serif italic text-ink-muted mt-1" title={prioritySourceTitle(task.prioritySource)} data-testid="priority-source-note">
+                  <span className={cn("stamp mr-1.5", prioritySourceChipClass(task.prioritySource))}>{prioritySourceLabel(task.prioritySource) ?? task.prioritySource}</span>
+                  {task.prioritySource === "ai" ? "Suggested by the model, accepted by a manager" : "Set by hand"}
+                  {task.priorityNote ? ` — ${task.priorityNote}` : ""}
+                </p>
               ) : null}
               {why ? <p className="text-xs font-serif italic text-ink-muted mt-1">{why.explanation}</p> : null}
             </div>
+
+            {/* Hidden entirely unless this deployment has a provider configured. */}
+            <SuggestPriorityPanel task={task} onApplied={(patch) => onTaskUpdated?.(patch)} />
 
             <div className="mt-4">
               <Field label="Stream">{task.streamName ?? <span className="text-ink-muted">unassigned</span>}</Field>

@@ -1,5 +1,5 @@
 import { api, callAction } from "@/lib/api";
-import type { AppRow, NextTaskResult, OrgStats, StreamOption, StreamTotals, SystemicStream, TaskFilters, TaskPage } from "./types";
+import type { AiBatchResult, AiStatus, AppRow, NextTaskResult, OrgStats, PrioritySuggestionResult, StreamOption, StreamTotals, SystemicStream, TaskFilters, TaskPage } from "./types";
 
 /**
  * The KPI strip and the backlog table read through the two bespoke GETs so the
@@ -63,3 +63,21 @@ function asArray<T>(value: unknown, key: string): T[] {
 export const fetchStreams = () => callAction<unknown>("stream.list", {}).then((r) => asArray<StreamOption>(r, "streams"));
 export const fetchStreamTotals = () => callAction<unknown>("stream.totals", {}).then((r) => asArray<StreamTotals>(r, "totals"));
 export { asArray };
+
+/* ───────────────────────── AI-assisted priority ───────────────────────── */
+
+/**
+ * `ai.status` is the gate for the whole feature: a deployment with no key
+ * answers `{configured: false}` and the Overview hides every AI control rather
+ * than offering a button that can only fail. It is member-level and cheap, so
+ * the UI may poll it on mount.
+ */
+export const fetchAiStatus = () => callAction<AiStatus>("ai.status", {});
+
+/** Propose urgency/impact/effort for one card. `apply` writes it; manager+ only. */
+export const suggestPriority = (args: { taskId: number; apply?: boolean; overrideManual?: boolean }) =>
+  callAction<PrioritySuggestionResult>("task.suggest_priority", args);
+
+/** The same thing across a stream or app, a few calls at a time. */
+export const suggestPriorityBatch = (args: { streamId?: number; appId?: number; limit?: number; apply?: boolean; overrideManual?: boolean }) =>
+  callAction<AiBatchResult>("task.suggest_priority_batch", args);

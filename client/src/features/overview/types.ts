@@ -144,3 +144,69 @@ export interface StreamTotals {
 export interface StreamOption { id: number; name: string; color?: string | null; archived?: boolean }
 
 export type Band = "critical" | "high" | "medium" | "low";
+
+/* ───────────────────────── AI-assisted priority ───────────────────────── */
+
+/** `ai.status` — the whole feature hangs off `configured`. */
+export interface AiStatus {
+  configured: boolean;
+  provider: "anthropic" | "openai" | null;
+  model: string | null;
+}
+
+export interface AiUsage {
+  provider: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  /** false when the server's price table did not know the model — costUsd is 0, not an estimate. */
+  priced: boolean;
+  attempts: number;
+  durationMs: number;
+}
+
+export interface PriorityCalibration {
+  openTasks: number;
+  p25: number | null;
+  p50: number | null;
+  p75: number | null;
+  top: { id: number; title: string; priorityScore: number }[];
+}
+
+/** One card's proposal, as `task.suggest_priority` returns it. */
+export interface PrioritySuggestionResult {
+  taskId: number;
+  title: string;
+  current: { urgency: number; impact: number; effort: number; priorityScore: number; prioritySource: string; band: Band };
+  suggestion: {
+    urgency: number;
+    impact: number;
+    effort: number;
+    priorityScore: number;
+    band: Band;
+    rationale: string;
+    confidence: number;
+  };
+  delta: { urgency: number; impact: number; effort: number; priorityScore: number };
+  applied: boolean;
+  /** "manual" = the card's score was set by hand and was left alone. */
+  skipped: "manual" | null;
+  usage: AiUsage;
+  /** The card as it now stands, only when `applied`. */
+  task: (Omit<TaskRow, "streamName" | "streamColor" | "appKey" | "appName" | "assigneeName" | "assigneeIsAgent"> & { end: string | null }) | null;
+  calibration: PriorityCalibration;
+}
+
+export interface AiBatchResult {
+  considered: number;
+  scored: number;
+  applied: number;
+  failed: number;
+  skipped: { taskId: number; title: string; reason: "manual" }[];
+  results: PrioritySuggestionResult[];
+  failures: { taskId: number; title: string; error: string }[];
+  totals: { calls: number; inputTokens: number; outputTokens: number; costUsd: number };
+  apply: boolean;
+  concurrency: number;
+}

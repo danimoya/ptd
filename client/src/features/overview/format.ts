@@ -116,3 +116,61 @@ export function isOverdue(dueDate: string | null | undefined, status: string): b
   const d = new Date(dueDate).getTime();
   return !Number.isNaN(d) && d < Date.now();
 }
+
+/* ───────────────────────── AI-assisted priority ───────────────────────── */
+
+/**
+ * Where a card's score came from, as a two-to-six character glyph for a table
+ * row. `formula` is the default and gets nothing: a glyph on every row would say
+ * nothing about any of them.
+ */
+export function prioritySourceLabel(source: string | null | undefined): string | null {
+  if (source === "ai") return "AI";
+  if (source === "manual") return "manual";
+  return null;
+}
+
+/** The one sentence every AI control repeats, so the promise is stated the same way everywhere. */
+export const AI_MANUAL_PROMISE = "A score you set by hand is never replaced by a suggestion without you confirming it.";
+
+const PRIORITY_SOURCE_TITLE: Record<string, string> = {
+  ai: `Scored from an AI suggestion a manager accepted. The note on the card is the model's rationale. ${AI_MANUAL_PROMISE}`,
+  manual: `Scored by hand. ${AI_MANUAL_PROMISE}`,
+  formula: "Scored by the formula: urgency × impact ÷ effort.",
+};
+
+/** Tooltip text for the glyph above (and for the drawer's score block). */
+export function prioritySourceTitle(source: string | null | undefined): string {
+  return PRIORITY_SOURCE_TITLE[source ?? "formula"] ?? PRIORITY_SOURCE_TITLE.formula;
+}
+
+const SOURCE_CHIP: Record<string, string> = {
+  ai: "border-ink/50 text-ink",
+  manual: "border-rule text-ink-muted",
+};
+
+export const prioritySourceChipClass = (source: string) => SOURCE_CHIP[source] ?? "border-rule text-ink-muted";
+
+/** 0.72 → "72%". Confidence is a model's own hedge; showing two decimals would flatter it. */
+export function formatConfidence(value: number | null | undefined): string {
+  const n = typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
+  return `${Math.round(n * 100)}%`;
+}
+
+/**
+ * Money at the scale one suggestion actually costs. `formatUsd` rounds a
+ * $0.0002 call to "<$0.01", which is true but useless when the question is
+ * "what would this cost across the backlog?".
+ */
+export function formatAiCost(value: number | null | undefined): string {
+  const n = typeof value === "number" && Number.isFinite(value) ? value : 0;
+  if (n <= 0) return "$0";
+  if (n < 0.01) return `$${n.toPrecision(2)}`;
+  return `$${n.toFixed(2)}`;
+}
+
+/** "+18" / "−4" / "0" — a delta reads wrong without its sign. */
+export function formatDelta(value: number): string {
+  if (value === 0) return "0";
+  return value > 0 ? `+${value}` : `−${Math.abs(value)}`;
+}

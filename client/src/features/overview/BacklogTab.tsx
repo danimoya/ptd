@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { ArrowDown, ArrowUp, Bot, Loader2, Search, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { fetchApps, fetchNextTask, fetchStreams, fetchTasks } from "./api";
-import { bandChipClass, bandTextClass, formatDay, isOverdue, STATUS_LABEL, statusChipClass } from "./format";
+import { bandChipClass, bandTextClass, formatDay, isOverdue, prioritySourceChipClass, prioritySourceLabel, prioritySourceTitle, STATUS_LABEL, statusChipClass } from "./format";
 import TaskDrawer from "./TaskDrawer";
+import AiBatchDialog from "./ai/AiBatchDialog";
 import type { NextTaskResult, TaskFilters, TaskRow, TaskSort } from "./types";
 import { TASK_STATUSES } from "../../../../db/schema";
 
@@ -46,6 +47,7 @@ const selectClass = "draft-input h-9 py-0 text-sm w-full appearance-none bg-parc
 
 export default function BacklogTab() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   // Deep links from the Systemic and Apps tabs land here pre-filtered.
   const [params, setParams] = useSearchParams();
   const [search, setSearch] = useState(params.get("search") ?? "");
@@ -117,6 +119,17 @@ export default function BacklogTab() {
       setSort(key);
       setOrder(DEFAULT_ORDER[key]);
     }
+  };
+
+  /**
+   * An accepted AI suggestion changed the row under us: patch the open drawer so
+   * it stops showing the old score, and let the table refetch so the row's
+   * position and its "AI" glyph catch up.
+   */
+  const refreshTasks = () => queryClient.invalidateQueries({ queryKey: ["/api/tasks/query"] });
+  const onTaskUpdated = (patch: Partial<TaskRow>) => {
+    setSelected((prev) => (prev ? { ...prev, ...patch } : prev));
+    void refreshTasks();
   };
 
   const openTask = (t: TaskRow, w: NextTaskResult["why"] = null) => {
@@ -211,6 +224,16 @@ export default function BacklogTab() {
             {pickingNext ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
             <span className="eyebrow text-[10px] !text-current">next task</span>
           </button>
+          <AiBatchDialog
+            streams={Array.isArray(streams.data) ? streams.data : []}
+            apps={Array.isArray(apps.data) ? apps.data : []}
+            defaultStreamId={streamId && streamId !== "none" ? Number(streamId) : undefined}
+            defaultAppId={appId && appId !== "none" ? Number(appId) : undefined}
+            onApplied={() => {
+              void refreshTasks();
+              toast({ title: "Priorities updated", description: "The suggestions the batch wrote are on the cards now." });
+            }}
+          />
           <span className="eyebrow text-[10px] ml-auto font-numeric" data-testid="result-count">
             {tasks.isFetching ? "…" : `${total} task${total === 1 ? "" : "s"}`}
           </span>
@@ -255,6 +278,15 @@ export default function BacklogTab() {
                     <span className={cn("font-numeric text-base font-medium", bandTextClass(t.priorityScore))} data-testid={`task-score-${t.id}`}>
                       {t.priorityScore}
                     </span>
+                    {prioritySourceLabel(t.prioritySource) ? (
+                      <span
+                        className={cn("stamp block mt-0.5 w-fit", prioritySourceChipClass(t.prioritySource))}
+                        title={prioritySourceTitle(t.prioritySource)}
+                        data-testid={`priority-source-${t.id}`}
+                      >
+                        {prioritySourceLabel(t.prioritySource)}
+                      </span>
+                    ) : null}
                   </td>
                   <td className="px-3 py-2 hidden sm:table-cell">
                     <span className={cn("stamp", statusChipClass(t.status))}>{STATUS_LABEL[t.status] ?? t.status}</span>
@@ -321,7 +353,7 @@ export default function BacklogTab() {
         </div>
       </div>
 
-      <TaskDrawer task={selected} why={why} open={drawerOpen} onOpenChange={setDrawerOpen} />
+      <TaskDrawer task={selected} why={why} open={drawerOpen} onOpenChange={setDrawerOpen} onTaskUpdated={onTaskUpdated} />
     </div>
   );
 }

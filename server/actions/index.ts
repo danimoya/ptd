@@ -8,4 +8,5 @@ import "./oauth";
 import "./billing";
 import "./slack";
 import "./reports";
+import "./ai";
 export * from "./registry";
