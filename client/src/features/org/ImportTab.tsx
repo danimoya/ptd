@@ -425,8 +425,8 @@ export default function ImportTab() {
                   <b className="font-numeric">{result.created}</b> created, <b className="font-numeric">{result.updated}</b> updated,{" "}
                   <b className="font-numeric">{result.skipped}</b> skipped
                   {result.tasksLinked !== undefined ? <> · {result.tasksLinked} entries linked to a card</> : null}
-                  {result.streamsCreated.length > 0 ? <> · streams {result.streamsCreated.join(", ")}</> : null}
-                  {result.customersCreated.length > 0 ? <> · customers {result.customersCreated.join(", ")}</> : null}
+                  {(result.streamsCreated?.length ?? 0) > 0 ? <> · streams {result.streamsCreated!.join(", ")}</> : null}
+                  {(result.customersCreated?.length ?? 0) > 0 ? <> · customers {result.customersCreated!.join(", ")}</> : null}
                 </span>
               </p>
               {result.errors.length > 0 ? (

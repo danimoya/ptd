@@ -61,8 +61,8 @@ export interface CommitResult {
   created: number;
   updated: number;
   skipped: number;
-  streamsCreated: string[];
-  customersCreated: string[];
+  streamsCreated?: string[];
+  customersCreated?: string[];
   tasksLinked?: number;
   errors: string[];
   warnings: string[];
@@ -77,8 +77,8 @@ export interface ImportRun {
   created: number;
   updated: number;
   skipped: number;
-  streamsCreated: string[];
-  customersCreated: string[];
+  streamsCreated?: string[];
+  customersCreated?: string[];
   errors: number;
 }
 
