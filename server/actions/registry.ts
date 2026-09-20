@@ -3,7 +3,7 @@ import type { Role } from "../../db/schema";
 import { hasRole } from "../types";
 
 /** Which adapter invoked the action — recorded on task_events.via. */
-export type Via = "web" | "mcp" | "slack" | "api" | "import";
+export type Via = "web" | "mcp" | "slack" | "api" | "import" | "telegram" | "teams" | "github";
 
 export interface ActionContext {
   userId: number;

@@ -2,7 +2,13 @@ import type { Role } from "../../../db/schema";
 import { formatMinutes } from "./parse";
 
 /**
- * Block Kit rendering.
+ * One rendering of an action result, for every chat adapter.
+ *
+ * The wire shape is Slack's (Block Kit, `response_type`, mrkdwn) because Slack is
+ * the strictest of the three and Telegram/Teams are strictly poorer: `shared/markup.ts`
+ * turns the mrkdwn in these blocks into Telegram HTML or the plain text Teams wants,
+ * so a command reads the same wherever it was typed and there is exactly one place
+ * that knows what `/ptd today` looks like.
  *
  * Every reply is ephemeral (only the person who typed the command sees it) and
  * mrkdwn — Slack's dialect, not Markdown: `*bold*`, `_italic_`, backticks for code.
@@ -11,11 +17,14 @@ import { formatMinutes } from "./parse";
  * crashing the command.
  */
 
-export interface SlackReply {
+export interface Reply {
   response_type: "ephemeral" | "in_channel";
   text: string;
   blocks: unknown[];
 }
+
+/** The name the Slack adapter has always used for a {@link Reply}. */
+export type SlackReply = Reply;
 
 /** Slack's three reserved characters. Content from PTD is escaped before it is shown. */
 export function escape(value: string): string {
@@ -46,7 +55,7 @@ export function slackTime(value: unknown, fallback = "—"): string {
   return `<!date^${epoch}^{date_short_pretty} {time}|${stamp.slice(0, 16).replace("T", " ")}Z>`;
 }
 
-export function ephemeral(lines: string[], context?: string[]): SlackReply {
+export function ephemeral(lines: string[], context?: string[]): Reply {
   const body = lines.filter((l) => l.length > 0).join("\n");
   const blocks: unknown[] = [section(body.slice(0, 2900) || "—")];
   const extras = (context ?? []).filter((l) => l.length > 0);
@@ -117,7 +126,11 @@ export function taskLabel(task: Taskish): string {
 
 /* ── per-subcommand renderers ─────────────────────────────────────────── */
 
-export function renderNext(result: unknown): SlackReply {
+/**
+ * `next`. The follow-up it suggests has to be typed on the surface the caller is on, so
+ * the prefix is a parameter — Slack's `/ptd `, Telegram's `/`, Teams' `@PTD `.
+ */
+export function renderNext(result: unknown, prefix = "/ptd "): Reply {
   const payload = rec(result);
   if (!payload.task) {
     return ephemeral(["*Nothing claimable right now.*"], ["everything in scope is assigned to someone else, done, or blocked"]);
@@ -134,7 +147,7 @@ export function renderNext(result: unknown): SlackReply {
   const key = task.externalKey ?? String(task.id ?? "");
   return ephemeral(
     [`*Next up* — ${taskLabel(task)}`, facts.join(" · "), str(why.formula) ? `_${escape(str(why.formula)!)}_` : ""],
-    [`start it with \`/ptd start ${escape(key)}\``],
+    [`start it with \`${prefix}start ${escape(key)}\``],
   );
 }
 
@@ -142,7 +155,7 @@ function entryOf(result: unknown): Record<string, unknown> {
   return rec(rec(result).entry);
 }
 
-export function renderStart(result: unknown): SlackReply {
+export function renderStart(result: unknown, prefix = "/ptd "): Reply {
   const entry = entryOf(result);
   const cut = rec(rec(result).cut);
   const target = str(entry.taskTitle) ?? str(entry.streamName) ?? "no task";
@@ -151,10 +164,10 @@ export function renderStart(result: unknown): SlackReply {
     `since ${slackTime(entry.checkIn)}${str(entry.notes) ? ` · _${escape(str(entry.notes)!)}_` : ""}`,
   ];
   if (int(cut.id) !== null) lines.push(`_cut the previous ${cut.isBreak ? "break" : "session"} after ${formatMinutes(n0(cut.minutes))}_`);
-  return ephemeral(lines, ["stop it with `/ptd stop`"]);
+  return ephemeral(lines, [`stop it with \`${prefix}stop\``]);
 }
 
-export function renderStop(result: unknown): SlackReply {
+export function renderStop(result: unknown): Reply {
   const payload = rec(result);
   const entry = entryOf(result);
   const ignored = arr(payload.ignored).filter((v): v is string => typeof v === "string");
@@ -165,7 +178,7 @@ export function renderStop(result: unknown): SlackReply {
   );
 }
 
-export function renderLog(result: unknown): SlackReply {
+export function renderLog(result: unknown): Reply {
   const payload = rec(result);
   const entry = entryOf(result);
   const target = str(entry.taskTitle) ?? str(entry.streamName) ?? "no task";
@@ -175,7 +188,7 @@ export function renderLog(result: unknown): SlackReply {
   ]);
 }
 
-export function renderToday(result: unknown): SlackReply {
+export function renderToday(result: unknown): Reply {
   const payload = rec(result);
   const bySource = rec(payload.bySource);
   const human = rec(bySource.human);
@@ -200,7 +213,7 @@ export function renderToday(result: unknown): SlackReply {
 
 const MAX_ROWS = 10;
 
-export function renderTasks(result: unknown, status?: string): SlackReply {
+export function renderTasks(result: unknown, status?: string): Reply {
   const payload = rec(result);
   const tasks = arr(payload.tasks).map(taskish);
   const count = int(payload.count) ?? tasks.length;
@@ -213,7 +226,7 @@ export function renderTasks(result: unknown, status?: string): SlackReply {
   return ephemeral(lines, tasks.length > MAX_ROWS ? [`showing ${MAX_ROWS} of ${tasks.length} — the rest are in PTD`] : []);
 }
 
-export function renderPlan(result: unknown): SlackReply {
+export function renderPlan(result: unknown): Reply {
   const payload = rec(result);
   const task = taskish(payload.task);
   const cascaded = arr(payload.cascaded);
@@ -226,14 +239,19 @@ export function renderPlan(result: unknown): SlackReply {
   );
 }
 
-export function renderDone(result: unknown): SlackReply {
+export function renderDone(result: unknown): Reply {
   const payload = rec(result);
   const task = taskish(payload.task);
   if (payload.changed === false) return ephemeral([`${taskLabel(task)} was already complete.`]);
   return ephemeral([`*Done* — ${taskLabel(task)} :white_check_mark:`]);
 }
 
-export function renderWho(result: unknown, extra: { slackUserId: string; teamName: string | null }): SlackReply {
+/**
+ * `who`. `account` is the chat account as that surface writes it — a Slack `<@U1>`
+ * mention, a Telegram `@handle`, a Teams display name — and is therefore already
+ * escaped by its adapter; `scope` is the workspace / bot / team it lives in.
+ */
+export function renderWho(result: unknown, extra: { account: string; scope: string | null }): Reply {
   const payload = rec(result);
   const org = rec(payload.org);
   return ephemeral(
@@ -241,11 +259,11 @@ export function renderWho(result: unknown, extra: { slackUserId: string; teamNam
       `*${escape(str(payload.displayName) ?? "you")}* — ${escape(str(payload.email) ?? "")}`,
       `role *${escape(str(payload.role) ?? "?")}* in ${escape(str(org.name) ?? "your organization")} · authenticated as ${escape(str(payload.authType) ?? "human")}`,
     ],
-    [`linked to <@${escape(extra.slackUserId)}>${extra.teamName ? ` in ${escape(extra.teamName)}` : ""}`],
+    [`linked to ${extra.account}${extra.scope ? ` in ${escape(extra.scope)}` : ""}`],
   );
 }
 
-export function renderStats(result: unknown): SlackReply {
+export function renderStats(result: unknown): Reply {
   const payload = rec(result);
   const tasks = rec(payload.tasks);
   const bands = rec(payload.byPriorityBand);
@@ -266,17 +284,19 @@ export interface HelpEntry {
   summary: string;
   requiredRole: Role;
   allowed: boolean;
+  /** The bare verb, for the "N more commands need a higher role (…)" line. */
+  name?: string;
 }
 
-export function renderHelp(entries: HelpEntry[], role: Role): SlackReply {
+export function renderHelp(entries: HelpEntry[], role: Role): Reply {
   const allowed = entries.filter((e) => e.allowed);
   const hidden = entries.filter((e) => !e.allowed);
   const lines = [`*PTD commands* — your role is *${escape(role)}*`];
   for (const entry of allowed) lines.push(`\`${escape(entry.usage)}\` — ${escape(entry.summary)}`);
-  const context = hidden.length > 0 ? [`${hidden.length} more command${hidden.length === 1 ? "" : "s"} need a higher role (${hidden.map((h) => h.usage.split(" ")[1] ?? h.usage).join(", ")})`] : [];
+  const context = hidden.length > 0 ? [`${hidden.length} more command${hidden.length === 1 ? "" : "s"} need a higher role (${hidden.map((h) => h.name ?? h.usage.split(" ")[1] ?? h.usage).join(", ")})`] : [];
   return ephemeral(lines, context);
 }
 
-export function errorReply(text: string, hints: string[] = []): SlackReply {
+export function errorReply(text: string, hints: string[] = []): Reply {
   return ephemeral([text], hints);
 }

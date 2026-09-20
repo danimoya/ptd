@@ -1,4 +1,5 @@
 import type { Request } from "express";
+import { publicBaseUrl as publicBase } from "../shared/publicUrl";
 
 /**
  * App-level Slack configuration.
@@ -35,13 +36,8 @@ export function isSlackAppConfigured(app: SlackAppEnv = slackAppEnv()): boolean 
   return app.clientId !== "" && app.clientSecret !== "" && app.signingSecret !== "";
 }
 
-/** Public origin of this deployment. PTD_BASE_URL wins; otherwise the request tells us (trust proxy is on). */
-export function publicBaseUrl(req?: Request): string {
-  const configured = env("PTD_BASE_URL").replace(/\/+$/, "");
-  if (configured) return configured;
-  if (!req) return "";
-  return `${req.protocol}://${req.get("host") ?? "localhost"}`;
-}
+/** Public origin of this deployment — shared with the other adapters. */
+export { publicBaseUrl } from "../shared/publicUrl";
 
 /**
  * The redirect URI handed to Slack. It must match the one registered on the app
@@ -51,7 +47,7 @@ export function publicBaseUrl(req?: Request): string {
 export function slackRedirectUri(req?: Request): string {
   const explicit = env("SLACK_REDIRECT_URI");
   if (explicit) return explicit;
-  return `${publicBaseUrl(req)}${SLACK_BASE_PATH}/callback`;
+  return `${publicBase(req)}${SLACK_BASE_PATH}/callback`;
 }
 
 /** Where the browser lands after the OAuth dance, with the outcome in the query string. */

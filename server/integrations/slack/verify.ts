@@ -1,5 +1,6 @@
-import express, { type Express, type Request, type RequestHandler } from "express";
+import type { Express } from "express";
 import { createHmac, timingSafeEqual } from "crypto";
+import { RAW_BODY_LIMIT } from "../shared/rawBody";
 
 /**
  * Slack request verification (v0 signatures).
@@ -7,14 +8,15 @@ import { createHmac, timingSafeEqual } from "crypto";
  * Slack signs `v0:<timestamp>:<raw body>` with the app's signing secret and sends
  * the result in `X-Slack-Signature`. The signature is over the EXACT bytes, so the
  * raw body has to survive Express's global JSON/urlencoded parsers — see
- * `mountRawBodyCapture`, which is the only slightly devious thing in this adapter.
+ * `mountRawBodyCapture` in `../shared/rawBody`, which GitHub and Teams need for the
+ * same reason and which this module re-exports for the adapter's own use.
  */
 
 export const SIGNATURE_HEADER = "x-slack-signature";
 export const TIMESTAMP_HEADER = "x-slack-request-timestamp";
 /** Slack's own recommendation: refuse anything older than five minutes (replay window). */
 export const MAX_SKEW_SECONDS = 300;
-export const SLACK_BODY_LIMIT = "256kb";
+export const SLACK_BODY_LIMIT = RAW_BODY_LIMIT;
 
 export function slackSignature(signingSecret: string, timestamp: string, rawBody: string): string {
   return `v0=${createHmac("sha256", signingSecret).update(`v0:${timestamp}:${rawBody}`, "utf8").digest("hex")}`;
@@ -68,72 +70,15 @@ export const VERIFY_MESSAGES: Record<VerifyFailure, string> = {
 
 /* ── Raw body ─────────────────────────────────────────────────────────── */
 
-interface RawBodyRequest extends Request {
-  rawBody?: string;
-}
-
-/** The raw request body as a string, or null when something already parsed it away. */
-export function rawBodyOf(req: Request): string | null {
-  const r = req as RawBodyRequest;
-  if (typeof r.rawBody === "string") return r.rawBody;
-  const body: unknown = (req as { body?: unknown }).body;
-  if (Buffer.isBuffer(body)) {
-    r.rawBody = body.toString("utf8");
-    return r.rawBody;
-  }
-  if (typeof body === "string" && body.length > 0) {
-    r.rawBody = body;
-    return r.rawBody;
-  }
-  return null;
-}
-
-/** body-parser names its middleware, which is how we find where parsing starts. */
-const PARSER_NAMES = new Set(["jsonParser", "urlencodedParser", "textParser", "rawParser"]);
-
-interface LayerLike {
-  handle?: { name?: string };
-}
-
-function routerStack(app: Express): LayerLike[] | null {
-  // Express 4 keeps the app router on _router; Express 5 exposes `router`.
-  const holder = app as unknown as { _router?: { stack?: unknown }; router?: { stack?: unknown } };
-  const stack = holder._router?.stack ?? holder.router?.stack;
-  return Array.isArray(stack) ? (stack as LayerLike[]) : null;
-}
-
 /**
- * Capture the raw body for everything under `basePath`.
- *
- * server/index.ts installs `express.json()` and `express.urlencoded()` globally
- * *before* routes are registered, and a slash command arrives as
- * `application/x-www-form-urlencoded` — so by the time a route handler runs the
- * stream is gone and the bytes Slack signed are unrecoverable. Appending another
- * parser cannot help (body-parser sets `req._body` and later parsers stand down),
- * so this moves one raw-body layer (express.raw, matching every content type) to
- * just before the first
- * body parser in the app's stack. Everything downstream then sees `req.body` as a
- * Buffer for Slack paths only, and the global parsers skip them.
- *
- * Returns where the layer ended up, which the tests assert on.
+ * The raw-body capture moved to `../shared/rawBody` when GitHub (X-Hub-Signature-256)
+ * and Teams (Authorization: HMAC …) turned out to need exactly the same trick. The
+ * layer is named `slackRawBodyCapture` here so a router-stack dump still says which
+ * adapter asked for it.
  */
-export function mountRawBodyCapture(app: Express, basePath: string): "before-parsers" | "appended" {
-  const raw = express.raw({ type: "*/*", limit: SLACK_BODY_LIMIT });
-  const capture: RequestHandler = (req, res, next) => {
-    raw(req, res, (err?: unknown) => {
-      if (!err) rawBodyOf(req);
-      next(err as never);
-    });
-  };
-  Object.defineProperty(capture, "name", { value: "slackRawBodyCapture" });
-  app.use(basePath, capture);
+export { RAW_BODY_LIMIT, rawBodyOf } from "../shared/rawBody";
+import { mountRawBodyCapture as mountShared } from "../shared/rawBody";
 
-  const stack = routerStack(app);
-  if (!stack || stack.length === 0) return "appended";
-  const firstParser = stack.findIndex((layer) => PARSER_NAMES.has(layer?.handle?.name ?? ""));
-  if (firstParser === -1 || firstParser >= stack.length - 1) return "appended";
-  const layer = stack.pop();
-  if (!layer) return "appended";
-  stack.splice(firstParser, 0, layer);
-  return "before-parsers";
+export function mountRawBodyCapture(app: Express, basePath: string): "before-parsers" | "appended" {
+  return mountShared(app, basePath, "slackRawBodyCapture");
 }

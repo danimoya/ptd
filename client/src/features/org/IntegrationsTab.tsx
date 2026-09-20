@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Github, Loader2, Plus, Send, ShieldAlert, Trash2, TriangleAlert, Webhook } from "lucide-react";
+import { Check, Loader2, Plus, Send, ShieldAlert, Trash2, TriangleAlert, Webhook } from "lucide-react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -13,6 +13,9 @@ import { Hint } from "./Hint";
 import { createWebhook, deleteWebhook, listWebhooks, testWebhook, type CreatedWebhook, type WebhookTestResult } from "./api";
 import { ALL_EVENT_KINDS, EVENT_GROUPS, parseEvents, unknownEvents } from "./events";
 import SlackCard from "./slack/SlackCard";
+import GithubCard from "./github/GithubCard";
+import TelegramCard from "./telegram/TelegramCard";
+import TeamsCard from "./teams/TeamsCard";
 
 const EXAMPLE_ENVELOPE = JSON.stringify(
   { event: "task.completed", orgId: 1, taskId: 42, actor: { userId: 7, label: "Nightly Triage Bot", isAgent: true }, payload: { status: "completed" }, ts: "2026-09-19T09:00:00.000Z" },
@@ -29,7 +32,7 @@ function verify(rawBody, header, secret) {
   return a.length === b.length && timingSafeEqual(a, b);
 }`;
 
-/** Webhooks and Slack are live; GitHub is declared, not pretended. */
+/** Webhooks, Slack, GitHub, Telegram and Teams — every one of them live. */
 export default function IntegrationsTab() {
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -87,10 +90,12 @@ export default function IntegrationsTab() {
         why={
           <>
             This is how PTD tells the rest of your tools what just happened, so nobody has to copy a status across by hand. A
-            webhook POSTs every task event to a URL you own — n8n, Zapier, Make, a GitHub Action — while Slack puts assignments,
-            completions and agent-budget alerts where your team already talks. Slack runs the other way too: a{" "}
-            <code className="font-mono text-xs">/ptd</code> command acts as whoever linked their account, with that person's
-            role, so connecting a workspace never widens what anyone may do.
+            webhook POSTs every task event to a URL you own — n8n, Zapier, Make, a GitHub Action — while Slack, Telegram and
+            Teams put the work where your team already talks, and GitHub keeps issues and cards as one thing. They all run the
+            other way too: a <code className="font-mono text-xs">/ptd</code> command, a{" "}
+            <code className="font-mono text-xs">/next</code>, an <code className="font-mono text-xs">@PTD today</code> or an
+            imported issue acts as whoever linked the account, with that person's role, so connecting a workspace or a
+            repository never widens what anyone may do.
           </>
         }
         technical={
@@ -109,12 +114,25 @@ export default function IntegrationsTab() {
             </li>
             <li>Subscribe to everything or name the kinds you want; an unknown kind is accepted and then never delivered.</li>
             <li>
-              Slack commands run the same registry actions as this web app, as the linked PTD user and with their role. Linking
-              is <code>/ptd link &lt;code&gt;</code> with a one-time code that lasts ten minutes.
+              Chat commands run the same registry actions as this web app, as the linked PTD user and with their role — one
+              vocabulary, three surfaces: <code>/ptd next</code> in Slack, <code>/next</code> in Telegram,{" "}
+              <code>@PTD next</code> in Teams. Linking is always a one-time code that lasts ten minutes.
             </li>
             <li>
-              Slack needs <code>SLACK_CLIENT_ID</code>, <code>SLACK_CLIENT_SECRET</code> and <code>SLACK_SIGNING_SECRET</code> on
-              the server, and the bot has to be invited to the notification channel before it can post there.
+              Every inbound delivery is verified before it is trusted: Slack's <code>v0=</code> signature, GitHub's{" "}
+              <code>X-Hub-Signature-256</code>, Teams' <code>Authorization: HMAC …</code>, and for Telegram a webhook path whose
+              secret is derived from <code>PTD_SECRET_KEY</code> and the bot token.
+            </li>
+            <li>
+              GitHub joins an issue to a card through <code>externalKey</code> — <code>gh:owner/name#12</code> — so an import is
+              idempotent and a replayed delivery changes nothing. Anything PTD writes because of GitHub is marked{" "}
+              <code>via: github</code>, which is what stops the two sides echoing each other.
+            </li>
+            <li>
+              Server-side configuration: Slack needs <code>SLACK_CLIENT_ID</code>, <code>SLACK_CLIENT_SECRET</code> and{" "}
+              <code>SLACK_SIGNING_SECRET</code>; GitHub needs <code>GITHUB_APP_ID</code>, <code>GITHUB_APP_PRIVATE_KEY</code>,{" "}
+              <code>GITHUB_APP_SLUG</code> and <code>GITHUB_WEBHOOK_SECRET</code>; Telegram needs <code>TELEGRAM_BOT_TOKEN</code>.
+              Teams needs nothing on the server — its outgoing webhook is created inside Teams.
             </li>
           </>
         }
@@ -306,19 +324,11 @@ export default function IntegrationsTab() {
 
       <SlackCard />
 
-      <article className="paper-flat p-4 opacity-80" data-testid="coming-soon-github">
-        <div className="flex items-center gap-2">
-          <Github className="h-4 w-4 text-ink-muted" />
-          <span className="font-display text-lg tracking-tight">GitHub</span>
-          <span className="stamp border-rule text-ink-muted ml-auto">coming soon</span>
-        </div>
-        <p className="text-sm font-serif text-ink-muted mt-2">
-          Mirror issues and pull requests onto tasks through <code className="font-mono text-xs">externalKey</code>, both directions.
-        </p>
-        <p className="eyebrow text-[9px] mt-2">
-          the <code className="font-mono">org_integrations</code> table already carries this kind — only the adapter is missing
-        </p>
-      </article>
+      <GithubCard />
+
+      <TelegramCard />
+
+      <TeamsCard />
     </div>
   );
 }

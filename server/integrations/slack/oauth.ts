@@ -1,70 +1,36 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { SLACK_SCOPES, slackAppEnv } from "./config";
 import { oauthAccess } from "./web";
 import type { SlackInstall } from "./store";
+import {
+  signState as signSharedState,
+  verifyState as verifySharedState,
+  type StateCheck,
+  type StatePayload,
+} from "../shared/state";
 
 /**
  * Slack OAuth v2 ("Add to Slack").
  *
  * The `state` parameter is the only thing tying the browser round-trip back to a
- * PTD organization, so it is signed (HMAC-SHA256, keyed from PTD_SECRET_KEY) and
- * short-lived: the callback needs no PTD session, and a stolen or hand-made state
- * cannot install an app into someone else's organization.
+ * PTD organization, so it is signed and short-lived — see `../shared/state`, which
+ * the GitHub App install uses for the same reason under its own purpose string.
  */
 
-export const STATE_TTL_MS = 10 * 60 * 1000;
+export const SLACK_STATE_PURPOSE = "slack-oauth-state";
 export const SLACK_AUTHORIZE_URL = "https://slack.com/oauth/v2/authorize";
 
-export interface StatePayload {
-  orgId: number;
-  userId: number;
-  nonce: string;
-  exp: number;
+export { STATE_TTL_MS, type StateFailure, type StatePayload } from "../shared/state";
+
+/** Slack's install state, signed with the shared helper under the Slack purpose. */
+export function signState(
+  payload: Omit<StatePayload, "nonce" | "exp"> & Partial<Pick<StatePayload, "nonce" | "exp">>,
+  now = Date.now(),
+): string {
+  return signSharedState(SLACK_STATE_PURPOSE, payload, now);
 }
 
-function stateKey(): Buffer {
-  const raw = process.env.PTD_SECRET_KEY;
-  if (!raw) {
-    if (process.env.NODE_ENV === "production") throw new Error("PTD_SECRET_KEY must be set in production");
-    return createHash("sha256").update("ptd-dev-secret-key").digest();
-  }
-  return createHash("sha256").update(`slack-oauth-state:${raw}`).digest();
-}
-
-const b64 = (value: Buffer | string): string => Buffer.from(value as never).toString("base64url");
-
-export function signState(payload: Omit<StatePayload, "nonce" | "exp"> & Partial<Pick<StatePayload, "nonce" | "exp">>, now = Date.now()): string {
-  const full: StatePayload = {
-    orgId: payload.orgId,
-    userId: payload.userId,
-    nonce: payload.nonce ?? randomBytes(9).toString("base64url"),
-    exp: payload.exp ?? now + STATE_TTL_MS,
-  };
-  const body = b64(JSON.stringify(full));
-  const mac = createHmac("sha256", stateKey()).update(body).digest("base64url");
-  return `${body}.${mac}`;
-}
-
-export type StateFailure = "malformed" | "bad_signature" | "expired";
-
-export function verifyState(raw: string, now = Date.now()): { ok: true; payload: StatePayload } | { ok: false; reason: StateFailure } {
-  const [body, mac] = (raw ?? "").split(".");
-  if (!body || !mac) return { ok: false, reason: "malformed" };
-  const expected = createHmac("sha256", stateKey()).update(body).digest("base64url");
-  const a = Buffer.from(mac, "utf8");
-  const b = Buffer.from(expected, "utf8");
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return { ok: false, reason: "bad_signature" };
-  let payload: StatePayload;
-  try {
-    payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as StatePayload;
-  } catch {
-    return { ok: false, reason: "malformed" };
-  }
-  if (typeof payload?.orgId !== "number" || typeof payload?.userId !== "number" || typeof payload?.exp !== "number") {
-    return { ok: false, reason: "malformed" };
-  }
-  if (payload.exp <= now) return { ok: false, reason: "expired" };
-  return { ok: true, payload };
+export function verifyState(raw: string, now = Date.now()): StateCheck {
+  return verifySharedState(SLACK_STATE_PURPOSE, raw, now);
 }
 
 export function installUrl(input: { clientId: string; redirectUri: string; state: string; scopes?: readonly string[] }): string {

@@ -1,7 +1,10 @@
 /**
- * Slash-command text parsing. Pure functions, no I/O — this is the part with the
- * most edge cases (`45m`, `1h30m`, `tokens=1200 cost=0.12`, `PTD-12` vs `#42`) and
- * therefore the part worth unit-testing hardest.
+ * Chat-command text parsing, shared by every chat adapter (Slack, Telegram, Teams).
+ *
+ * Pure functions, no I/O — this is the part with the most edge cases (`45m`,
+ * `1h30m`, `tokens=1200 cost=0.12`, `PTD-12` vs `#42`) and therefore the part worth
+ * unit-testing hardest. It lives here rather than in one adapter because all three
+ * adapters take the same words from a human and have to read them the same way.
  */
 
 /** Slack HTML-escapes &, < and > in command text. Undo that before parsing. */

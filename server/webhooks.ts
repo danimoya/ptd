@@ -106,8 +106,11 @@ export function buildEnvelope(orgId: number, event: OutboundEvent) {
  */
 export async function dispatchWebhooks(orgId: number, event: OutboundEvent): Promise<void> {
   try {
-    // The Slack adapter listens to the same fan-out; it never throws and is never awaited.
+    // The chat and code-host adapters listen to the same fan-out; none of them throws
+    // and none is ever awaited — a third party being down must not fail a mutation.
     void import("./integrations/slack/notify").then((slack) => slack.notifySlack(orgId, event)).catch(() => {});
+    void import("./integrations/github/notify").then((github) => github.notifyGithub(orgId, event)).catch(() => {});
+    void import("./integrations/telegram/notify").then((telegram) => telegram.notifyTelegram(orgId, event)).catch(() => {});
     const rows = await db
       .select({ id: orgIntegrations.id, config: orgIntegrations.config })
       .from(orgIntegrations)
