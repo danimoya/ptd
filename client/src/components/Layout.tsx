@@ -2,6 +2,7 @@ import { Outlet, useLocation, Link } from "react-router-dom";
 import { LayoutDashboard, GanttChartSquare, Timer, Building2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import OrgSwitcher from "./OrgSwitcher";
+import PoweredBy from "./PoweredBy";
 import { SURFACES, useMe } from "@/hooks/use-me";
 
 const ICONS = { overview: LayoutDashboard, plan: GanttChartSquare, track: Timer, org: Building2 } as const;
@@ -17,7 +18,9 @@ export default function Layout() {
 
   return (
     <div className="grain min-h-[100dvh]">
-      <div className="mx-auto max-w-6xl px-4 sm:px-8 lg:px-12 min-h-[100dvh] flex flex-col relative z-10">
+      {/* Full-bleed shell: the only horizontal limit is the fluid .app-gutter, so
+          every surface gets the whole viewport width. */}
+      <div className="w-full app-gutter min-h-[100dvh] flex flex-col relative z-10">
         <header className="rule-b">
           <div className="pt-4 pb-3 sm:pt-6 sm:pb-5">
             <div className="flex items-start justify-between gap-3">
@@ -68,15 +71,22 @@ export default function Layout() {
         </main>
 
         <footer className="hidden sm:block rule-t">
-          <div className="py-4 flex items-center justify-between text-xs text-ink-muted">
-            <span className="eyebrow text-[10px]">Open core · MIT</span>
-            <span className="font-display italic text-sm">Plan the work in one view, log it in the other.</span>
+          <div className="py-4 flex items-center justify-between gap-6 text-xs text-ink-muted">
+            <span className="flex items-baseline gap-3">
+              <span className="eyebrow text-[10px]">Open core · MIT</span>
+              <span className="text-ink-muted/40">·</span>
+              <PoweredBy />
+            </span>
+            <span className="hidden md:inline font-display italic text-sm">Plan the work in one view, log it in the other.</span>
             <span className="eyebrow text-[10px]">MMXXVI</span>
           </div>
         </footer>
       </div>
 
       <nav className="sm:hidden fixed bottom-0 inset-x-0 z-20 border-t border-ink/70 bg-parchment/95 backdrop-blur" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+        <div className="flex items-center justify-center gap-2 border-b border-rule px-4 py-1">
+          <PoweredBy className="text-[9px] tracking-wider2" />
+        </div>
         <ul className={cn("grid", tabs.length === 4 ? "grid-cols-4" : tabs.length === 3 ? "grid-cols-3" : tabs.length === 2 ? "grid-cols-2" : "grid-cols-1")}>
           {tabs.map((t) => {
             const Icon = t.icon;

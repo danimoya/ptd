@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   DndContext,
   DragOverlay,
@@ -12,17 +13,29 @@ import {
   type Modifier,
 } from "@dnd-kit/core";
 import { addDays, differenceInDays, endOfMonth, format, startOfMonth } from "date-fns";
-import { Check, ChevronRight, GanttChartSquare, GitBranch, LayoutList, Search } from "lucide-react";
+import {
+  Check,
+  ChevronRight,
+  GanttChartSquare,
+  GitBranch,
+  LayoutList,
+  Maximize,
+  Minimize,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Search,
+} from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
-import { Backlog, BACKLOG_DROP_ID } from "@/features/plan/Backlog";
+import PoweredBy from "@/components/PoweredBy";
+import { Backlog, BacklogHandle, BACKLOG_DROP_ID } from "@/features/plan/Backlog";
 import { CascadeView } from "@/features/plan/CascadeView";
 import { Timeline, DAY_WIDTH, type BarDrag, type DropHint } from "@/features/plan/Timeline";
 import { TaskCard } from "@/features/plan/TaskCard";
 import { TaskDialog } from "@/features/plan/TaskDialog";
 import { usePlanApps, usePlanMembers, usePlanStreams, usePlanTasks, useTaskMutations } from "@/features/plan/api";
 import { dayOf, isBlockedNow, pad4, toDayString } from "@/features/plan/logic";
-import { usePersistentState } from "@/features/plan/usePersistentState";
+import { usePersistentFlag, usePersistentState } from "@/features/plan/usePersistentState";
 import type { CascadeGroup, CascadeOrder, GroupBy, PlanTask, ViewMode } from "@/features/plan/types";
 
 const VIEWS = ["board", "timeline", "cascade"] as const;
@@ -59,6 +72,8 @@ export default function Plan() {
   const [groupBy, setGroupBy] = usePersistentState<GroupBy>("ptd.plan.groupBy", "stream", GROUP_BYS);
   const [cascadeOrder, setCascadeOrder] = usePersistentState<CascadeOrder>("ptd.plan.cascade.order", "priority_score", CASCADE_ORDERS);
   const [cascadeGroup, setCascadeGroup] = usePersistentState<CascadeGroup>("ptd.plan.cascade.group", "stream", CASCADE_GROUPS);
+  const [sidebarHidden, setSidebarHidden] = usePersistentFlag("ptd.plan.sidebarHidden", false);
+  const [fullscreen, setFullscreen] = useState(false);
 
   const [viewDate, setViewDate] = useState(() => new Date());
   const [dialog, setDialog] = useState<DialogState>(CLOSED);
@@ -85,10 +100,22 @@ export default function Plan() {
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
+  /**
+   * The timeline stretches its day columns to fill the room the full-bleed shell
+   * (or full screen) gives it, and reports the width it settled on. A ref, not
+   * state: the snap modifier and the drop handler read it mid-drag, and a
+   * re-render there would fight dnd-kit's own measurements.
+   */
+  const dayWidthRef = useRef(DAY_WIDTH);
+  const handleDayWidth = useCallback((width: number) => {
+    dayWidthRef.current = width;
+  }, []);
+
   /** Bars snap to whole days and stay in their lane; a backlog card moves freely. */
   const snapBars: Modifier = ({ transform, active }) => {
     if (typeof active?.id === "string" && active.id.startsWith("bar-")) {
-      return { ...transform, x: Math.round(transform.x / DAY_WIDTH) * DAY_WIDTH, y: 0, scaleX: 1, scaleY: 1 };
+      const unit = dayWidthRef.current;
+      return { ...transform, x: Math.round(transform.x / unit) * unit, y: 0, scaleX: 1, scaleY: 1 };
     }
     return transform;
   };
@@ -108,7 +135,10 @@ export default function Plan() {
     const activator = event.activatorEvent as { clientX?: number } | undefined;
     const pointerX = typeof activator?.clientX === "number" ? activator.clientX + event.delta.x : event.active.rect.current.translated?.left;
     if (typeof pointerX !== "number") return null;
-    const index = Math.floor((pointerX - laneRect.left) / DAY_WIDTH);
+    // The lane canvas is exactly one month wide, so its own rect gives the day
+    // unit whatever width the grid settled on.
+    const unit = laneRect.width > 0 ? laneRect.width / daysInMonth : dayWidthRef.current;
+    const index = Math.floor((pointerX - laneRect.left) / unit);
     return Math.max(0, Math.min(daysInMonth - 1, index));
   };
 
@@ -121,7 +151,7 @@ export default function Plan() {
   const handleDragMove = (event: DragMoveEvent) => {
     const data = event.active.data.current as { kind?: string; taskId?: number } | undefined;
     if (data?.kind === "bar" && data.taskId) {
-      const days = Math.round(event.delta.x / DAY_WIDTH);
+      const days = Math.round(event.delta.x / dayWidthRef.current);
       setBarDrag((prev) => (prev && prev.days === days ? prev : { taskId: data.taskId!, days }));
       return;
     }
@@ -157,7 +187,7 @@ export default function Plan() {
         unschedule.mutate({ taskId });
         return;
       }
-      const days = Math.round(event.delta.x / DAY_WIDTH);
+      const days = Math.round(event.delta.x / dayWidthRef.current);
       const current = dayOf(task.startDate);
       if (days === 0 || !current) return;
       drag.mutate({ taskId, startDate: toDayString(addDays(current, days)) });
@@ -175,6 +205,94 @@ export default function Plan() {
       else schedule.mutate({ taskId, startDate });
     }
   };
+
+  /* ─────────── full screen ─────────── */
+
+  /**
+   * Full screen is a real overlay (fixed inset-0), not the Fullscreen API: it has
+   * to work in an iframe, in a browser that refuses the request, and on iOS. The
+   * native request is a bonus on top, so the chrome goes away too when the
+   * browser allows it.
+   */
+  const enterFullscreen = useCallback(() => {
+    setFullscreen(true);
+    try {
+      void document.documentElement.requestFullscreen?.()?.catch(() => {});
+    } catch {
+      /* the overlay is the real mechanism; the API is decoration */
+    }
+  }, []);
+
+  const exitFullscreen = useCallback(() => {
+    setFullscreen(false);
+    try {
+      if (document.fullscreenElement) void document.exitFullscreen?.()?.catch(() => {});
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const toggleFullscreen = useCallback(() => {
+    if (fullscreen) exitFullscreen();
+    else enterFullscreen();
+  }, [fullscreen, enterFullscreen, exitFullscreen]);
+
+  // The page behind the overlay must not scroll under it.
+  useEffect(() => {
+    if (!fullscreen) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [fullscreen]);
+
+  // Leaving the surface while full screen must not strand the browser in it.
+  useEffect(
+    () => () => {
+      try {
+        if (document.fullscreenElement) void document.exitFullscreen?.()?.catch(() => {});
+      } catch {
+        /* ignore */
+      }
+    },
+    []
+  );
+
+  // Esc inside native full screen is swallowed by the browser, which exits the
+  // API without telling the keyboard — so follow the API's own event too.
+  useEffect(() => {
+    const onChange = () => {
+      if (!document.fullscreenElement) setFullscreen(false);
+    };
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  // `f` toggles, `Esc` leaves — unless the caret is in a field or a dialog owns
+  // the keyboard.
+  useEffect(() => {
+    const isTyping = (target: EventTarget | null) => {
+      const el = target as HTMLElement | null;
+      if (!el || typeof el.tagName !== "string") return false;
+      const tag = el.tagName.toLowerCase();
+      return tag === "input" || tag === "textarea" || tag === "select" || el.isContentEditable === true;
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (dialog.open) return;
+      if (event.key === "Escape") {
+        if (fullscreen) exitFullscreen();
+        return;
+      }
+      if ((event.key === "f" || event.key === "F") && !isTyping(event.target)) {
+        event.preventDefault();
+        toggleFullscreen();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [dialog.open, fullscreen, exitFullscreen, toggleFullscreen]);
 
   /* ─────────── render ─────────── */
 
@@ -200,7 +318,99 @@ export default function Plan() {
       onComplete={completeCard}
       barDrag={barDrag}
       dropHint={dropHint}
+      onDayWidth={handleDayWidth}
     />
+  );
+
+  /**
+   * The working area — what full screen puts under glass. In full screen it is a
+   * flex child that has to fill the overlay, so the box gets `flex-1 min-h-0`
+   * and the inner panes keep their own scrolling.
+   */
+  const workArea = (
+    <div
+      className={cn(
+        fullscreen
+          ? // Below lg the board stacks, so the overlay scrolls the way the page
+            // does; from lg the panes fill the glass and scroll inside themselves.
+            "nice-scroll flex min-h-0 flex-1 flex-col overflow-auto lg:overflow-visible"
+          : "mt-5"
+      )}
+    >
+      {view === "board" && (
+        <div
+          className={cn(
+            "paper grid grid-cols-1 overflow-hidden",
+            sidebarHidden ? "lg:grid-cols-[28px_minmax(0,1fr)]" : "lg:grid-cols-[320px_minmax(0,1fr)]",
+            fullscreen && "max-lg:shrink-0 lg:min-h-0 lg:flex-1"
+          )}
+        >
+          {sidebarHidden ? (
+            <BacklogHandle
+              count={backlog.length}
+              onShow={() => setSidebarHidden(false)}
+              onExitFullscreen={fullscreen ? exitFullscreen : undefined}
+            />
+          ) : (
+            <aside className="min-w-0 border-b border-rule bg-parchment-deep/30 lg:border-b-0 lg:border-r">
+              <Backlog
+                tasks={backlog}
+                streams={streams}
+                apps={apps}
+                members={members}
+                onOpen={openCard}
+                onComplete={completeCard}
+                onSchedule={scheduleCard}
+                onDraft={draftCard}
+                draggingTaskId={activeCard?.id ?? null}
+                onHide={() => setSidebarHidden(true)}
+                onExitFullscreen={fullscreen ? exitFullscreen : undefined}
+              />
+            </aside>
+          )}
+          <div className="min-w-0">{timeline}</div>
+        </div>
+      )}
+
+      {view === "timeline" && <div className={cn("paper overflow-hidden", fullscreen && "max-lg:shrink-0 lg:min-h-0 lg:flex-1")}>{timeline}</div>}
+
+      {view === "cascade" && (
+        <div className={cn("paper overflow-hidden", fullscreen && "max-lg:shrink-0 lg:min-h-0 lg:flex-1")}>
+          <CascadeView
+            tasks={tasks}
+            streams={streams}
+            apps={apps}
+            members={members}
+            order={cascadeOrder}
+            onOrderChange={setCascadeOrder}
+            group={cascadeGroup}
+            onGroupChange={setCascadeGroup}
+            onOpen={openCard}
+          />
+        </div>
+      )}
+    </div>
+  );
+
+  /**
+   * The drag ghost travels with the working area: inside full screen it has to be
+   * rendered in the overlay's stacking context, or dnd-kit's z-index lands under
+   * the overlay and the card disappears mid-drag.
+   */
+  const dragGhost = (
+    <DragOverlay dropAnimation={null}>
+      {activeCard && (
+        <div className="w-[280px] rotate-[-0.6deg] opacity-95">
+          <div className="paper px-3 py-2 shadow-stamp">
+            <div className="font-mono text-[10px] text-ink-muted">№{pad4(activeCard.id)}</div>
+            <div className="truncate font-display text-sm tracking-tight">{activeCard.title}</div>
+            <div className="eyebrow mt-0.5">
+              {dropHint ? `starts ${format(dropHint.date, "EEE dd MMM")}` : "drop on a lane to schedule"}
+            </div>
+          </div>
+        </div>
+      )}
+    </DragOverlay>
   );
 
   return (
@@ -214,11 +424,34 @@ export default function Plan() {
               Backlog on the left, the month on the right. Drag a card onto a lane to schedule it; dependants shift themselves.
             </p>
           </div>
-          <nav className="flex items-center border border-rule" aria-label="Plan view">
-            <ViewTab icon={LayoutList} label="Board" active={view === "board"} onClick={() => setView("board")} />
-            <ViewTab icon={GanttChartSquare} label="Timeline" active={view === "timeline"} onClick={() => setView("timeline")} />
-            <ViewTab icon={GitBranch} label="Cascade" active={view === "cascade"} onClick={() => setView("cascade")} />
-          </nav>
+          <div className="flex flex-wrap items-center gap-2">
+            <nav className="flex items-center border border-rule" aria-label="Plan view">
+              <ViewTab icon={LayoutList} label="Board" active={view === "board"} onClick={() => setView("board")} />
+              <ViewTab icon={GanttChartSquare} label="Timeline" active={view === "timeline"} onClick={() => setView("timeline")} />
+              <ViewTab icon={GitBranch} label="Cascade" active={view === "cascade"} onClick={() => setView("cascade")} />
+            </nav>
+            {view === "board" && (
+              <button
+                onClick={() => setSidebarHidden(!sidebarHidden)}
+                title={sidebarHidden ? "Show the backlog" : "Hide the backlog"}
+                aria-pressed={sidebarHidden}
+                data-testid="plan-sidebar-toggle"
+                className="eyebrow flex h-8 items-center gap-1.5 border border-rule px-3 transition-colors hover:bg-parchment-deep focus-ink"
+              >
+                {sidebarHidden ? <PanelLeftOpen className="h-3 w-3" /> : <PanelLeftClose className="h-3 w-3" />}
+                <span className="hidden sm:inline">Backlog</span>
+              </button>
+            )}
+            <button
+              onClick={toggleFullscreen}
+              title="Full screen (f)"
+              data-testid="plan-fullscreen-toggle"
+              className="eyebrow flex h-8 items-center gap-1.5 border border-rule px-3 transition-colors hover:bg-ink hover:!text-parchment focus-ink"
+            >
+              {fullscreen ? <Minimize className="h-3 w-3" /> : <Maximize className="h-3 w-3" />}
+              {fullscreen ? "Exit" : "Full screen"}
+            </button>
+          </div>
         </div>
 
         <dl className="mt-4 flex flex-wrap items-baseline gap-x-8 gap-y-2">
@@ -239,58 +472,71 @@ export default function Plan() {
 
       {!loading && !error && (
         <DndContext sensors={sensors} collisionDetection={pointerWithin} modifiers={[snapBars]} onDragStart={handleDragStart} onDragMove={handleDragMove} onDragEnd={handleDragEnd} onDragCancel={resetDrag}>
-          <div className="mt-5">
-            {view === "board" && (
-              <div className="paper grid grid-cols-1 overflow-hidden lg:grid-cols-[320px_1fr]">
-                <aside className="border-b border-rule bg-parchment-deep/30 lg:border-b-0 lg:border-r">
-                  <Backlog
-                    tasks={backlog}
-                    streams={streams}
-                    apps={apps}
-                    members={members}
-                    onOpen={openCard}
-                    onComplete={completeCard}
-                    onSchedule={scheduleCard}
-                    onDraft={draftCard}
-                    draggingTaskId={activeCard?.id ?? null}
-                  />
-                </aside>
-                <main className="min-w-0">{timeline}</main>
-              </div>
-            )}
-
-            {view === "timeline" && <div className="paper overflow-hidden">{timeline}</div>}
-
-            {view === "cascade" && (
-              <div className="paper overflow-hidden">
-                <CascadeView
-                  tasks={tasks}
-                  streams={streams}
-                  apps={apps}
-                  members={members}
-                  order={cascadeOrder}
-                  onOrderChange={setCascadeOrder}
-                  group={cascadeGroup}
-                  onGroupChange={setCascadeGroup}
-                  onOpen={openCard}
-                />
-              </div>
-            )}
-          </div>
-
-          <DragOverlay dropAnimation={null}>
-            {activeCard && (
-              <div className="w-[280px] rotate-[-0.6deg] opacity-95">
-                <div className="paper px-3 py-2 shadow-stamp">
-                  <div className="font-mono text-[10px] text-ink-muted">№{pad4(activeCard.id)}</div>
-                  <div className="truncate font-display text-sm tracking-tight">{activeCard.title}</div>
-                  <div className="eyebrow mt-0.5">
-                    {dropHint ? `starts ${format(dropHint.date, "EEE dd MMM")}` : "drop on a lane to schedule"}
+          {fullscreen
+            ? createPortal(
+                /* Portaled to <body>: the surface's own fade-in animation leaves a
+                   transform behind, which would make `fixed` resolve against the
+                   section instead of the viewport, and the shell's masthead and
+                   mobile bar sit in stacking contexts of their own. z-40 clears
+                   both while staying under Radix's z-50 dialogs. */
+                <div
+                  className="fixed inset-0 z-40 flex flex-col gap-2 bg-parchment p-2 sm:p-3"
+                  data-testid="plan-fullscreen"
+                  role="region"
+                  aria-label="Plan, full screen"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="eyebrow text-[10px] text-vermilion/90">II. Plan</span>
+                      <span className="hidden font-display text-sm italic text-ink-muted sm:inline">the drafting board, uncropped</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <nav className="flex items-center border border-rule" aria-label="Plan view">
+                        <ViewTab icon={LayoutList} label="Board" active={view === "board"} onClick={() => setView("board")} />
+                        <ViewTab icon={GanttChartSquare} label="Timeline" active={view === "timeline"} onClick={() => setView("timeline")} />
+                        <ViewTab icon={GitBranch} label="Cascade" active={view === "cascade"} onClick={() => setView("cascade")} />
+                      </nav>
+                      {view === "board" && (
+                        <button
+                          onClick={() => setSidebarHidden(!sidebarHidden)}
+                          title={sidebarHidden ? "Show the backlog" : "Hide the backlog"}
+                          aria-pressed={sidebarHidden}
+                          data-testid="plan-fs-sidebar-toggle"
+                          className="eyebrow flex h-8 items-center gap-1.5 border border-rule px-3 transition-colors hover:bg-parchment-deep focus-ink"
+                        >
+                          {sidebarHidden ? <PanelLeftOpen className="h-3 w-3" /> : <PanelLeftClose className="h-3 w-3" />}
+                          <span className="hidden sm:inline">Backlog</span>
+                        </button>
+                      )}
+                      <button
+                        onClick={exitFullscreen}
+                        title="Exit full screen (Esc)"
+                        data-testid="plan-fullscreen-exit"
+                        className="eyebrow flex h-8 items-center gap-1.5 border border-ink bg-ink px-3 !text-parchment transition-colors hover:bg-parchment hover:!text-ink focus-ink"
+                      >
+                        <Minimize className="h-3 w-3" />
+                        Exit
+                      </button>
+                    </div>
                   </div>
-                </div>
-              </div>
-            )}
-          </DragOverlay>
+
+                  {workArea}
+
+                  <div className="flex items-center justify-between gap-3 px-0.5">
+                    <span className="eyebrow text-[9px]">Esc or F to leave full screen</span>
+                    <PoweredBy className="text-[9px]" />
+                  </div>
+
+                  {dragGhost}
+                </div>,
+                document.body
+              )
+            : (
+                <>
+                  {workArea}
+                  {dragGhost}
+                </>
+              )}
         </DndContext>
       )}
 

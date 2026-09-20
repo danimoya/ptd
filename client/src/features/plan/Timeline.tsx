@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { addDays, differenceInDays, eachDayOfInterval, endOfMonth, format, isSameDay, isWeekend, startOfMonth } from "date-fns";
 import { CalendarDays, ChevronLeft, ChevronRight, GanttChartSquare, Layers, Users } from "lucide-react";
@@ -8,6 +8,7 @@ import { TaskCard } from "./TaskCard";
 import { buildLanes, dayOf, packSlots, tasksInWindow } from "./logic";
 import type { GroupBy, PlanApp, PlanStream, PlanTask } from "./types";
 
+/** The narrowest a day column is ever drawn — the base unit drags snap to. */
 export const DAY_WIDTH = 34;
 const ROW_HEIGHT = 44;
 const ROW_GAP = 6;
@@ -38,6 +39,12 @@ interface TimelineProps {
   onComplete: (task: PlanTask) => void;
   barDrag: BarDrag | null;
   dropHint: DropHint | null;
+  /**
+   * Reports the day column's measured width back to the board. The grid widens
+   * its columns to fill whatever room the full-bleed shell gives it, and the
+   * parent's drag maths has to snap to the same unit it can see.
+   */
+  onDayWidth?: (width: number) => void;
 }
 
 /**
@@ -63,11 +70,37 @@ export function Timeline({
   onComplete,
   barDrag,
   dropHint,
+  onDayWidth,
 }: TimelineProps) {
   const monthStart = startOfMonth(viewDate);
   const monthEnd = endOfMonth(viewDate);
   const days = useMemo(() => eachDayOfInterval({ start: monthStart, end: monthEnd }), [monthStart.getTime(), monthEnd.getTime()]);
-  const totalWidth = days.length * DAY_WIDTH;
+
+  /**
+   * Day columns stretch to fill the scroll port — the shell is full-bleed now, so
+   * a month pinned to 34px a day would leave a dead strip on a wide screen (and
+   * a very wide one in full screen). Never narrower than DAY_WIDTH, so a phone
+   * still scrolls the month horizontally as before.
+   */
+  const portRef = useRef<HTMLDivElement>(null);
+  const [dayWidth, setDayWidth] = useState(DAY_WIDTH);
+  useEffect(() => {
+    const port = portRef.current;
+    if (!port) return;
+    const measure = () => {
+      const available = port.clientWidth - LANE_LABEL_WIDTH;
+      const next = Math.max(DAY_WIDTH, Math.floor(available / days.length));
+      setDayWidth((prev) => (prev === next ? prev : next));
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(port);
+    return () => observer.disconnect();
+  }, [days.length]);
+  useEffect(() => onDayWidth?.(dayWidth), [dayWidth, onDayWidth]);
+
+  const totalWidth = days.length * dayWidth;
   const today = new Date();
   const todayIndex = days.findIndex((d) => isSameDay(d, today));
 
@@ -119,15 +152,15 @@ export function Timeline({
       </div>
 
       {/* ─────────── grid ─────────── */}
-      <div className="nice-scroll flex-1 overflow-auto bg-parchment-deep/30">
-        <div style={{ minWidth: LANE_LABEL_WIDTH + totalWidth }}>
+      <div ref={portRef} className="nice-scroll flex-1 overflow-auto bg-parchment-deep/30">
+        <div style={{ width: "100%", minWidth: LANE_LABEL_WIDTH + totalWidth }}>
           {/* day strip */}
-          <div className="sticky top-0 z-30 grid border-b border-ink bg-card" style={{ gridTemplateColumns: `${LANE_LABEL_WIDTH}px ${totalWidth}px` }}>
+          <div className="sticky top-0 z-30 grid border-b border-ink bg-card" style={{ gridTemplateColumns: `${LANE_LABEL_WIDTH}px ${totalWidth}px minmax(0, 1fr)` }}>
             <div className="sticky left-0 z-40 flex items-center justify-between border-r border-ink bg-parchment-deep px-3 py-2">
               <span className="eyebrow">Lane</span>
               <span className="font-mono text-[10px] tabular-nums text-ink-muted">{visible.length}</span>
             </div>
-            <div className="grid" style={{ gridTemplateColumns: `repeat(${days.length}, ${DAY_WIDTH}px)`, width: totalWidth }}>
+            <div className="grid" style={{ gridTemplateColumns: `repeat(${days.length}, ${dayWidth}px)`, width: totalWidth }}>
               {days.map((day) => (
                 <div
                   key={day.getTime()}
@@ -151,7 +184,7 @@ export function Timeline({
                 aria-hidden
                 className="pointer-events-none absolute bottom-0 top-0 z-20"
                 style={{
-                  left: LANE_LABEL_WIDTH + todayIndex * DAY_WIDTH + DAY_WIDTH / 2,
+                  left: LANE_LABEL_WIDTH + todayIndex * dayWidth + dayWidth / 2,
                   width: 1,
                   background: "repeating-linear-gradient(to bottom, hsl(var(--vermilion)) 0 4px, transparent 4px 8px)",
                 }}
@@ -166,7 +199,7 @@ export function Timeline({
                 const rows = Math.max(1, ...lane.tasks.map((t) => (slots.get(t.id) ?? 0) + 1));
                 const laneHeight = rows * (ROW_HEIGHT + ROW_GAP) + 14;
                 return (
-                  <div key={lane.key} className="grid rule-b" style={{ gridTemplateColumns: `${LANE_LABEL_WIDTH}px ${totalWidth}px` }}>
+                  <div key={lane.key} className="grid rule-b" style={{ gridTemplateColumns: `${LANE_LABEL_WIDTH}px ${totalWidth}px minmax(0, 1fr)` }}>
                     <div className="sticky left-0 z-20 flex items-start gap-2 border-r border-ink bg-card px-3 py-2.5">
                       <span className="mt-1 block h-5 w-1 shrink-0" style={{ background: lane.color }} />
                       <div className="min-w-0">
@@ -183,6 +216,7 @@ export function Timeline({
                     <LaneCanvas
                       lane={lane}
                       days={days}
+                      dayWidth={dayWidth}
                       monthStart={monthStart}
                       height={laneHeight}
                       slots={slots}
@@ -209,6 +243,7 @@ export function Timeline({
 function LaneCanvas({
   lane,
   days,
+  dayWidth,
   monthStart,
   height,
   slots,
@@ -223,6 +258,7 @@ function LaneCanvas({
 }: {
   lane: ReturnType<typeof buildLanes>[number];
   days: Date[];
+  dayWidth: number;
   monthStart: Date;
   height: number;
   slots: Map<number, number>;
@@ -245,10 +281,10 @@ function LaneCanvas({
       ref={setNodeRef}
       className={cn("relative transition-colors", isOver && "bg-vermilion/5")}
       style={{
-        width: days.length * DAY_WIDTH,
+        width: days.length * dayWidth,
         minHeight: height,
         backgroundImage: "linear-gradient(to right, hsl(var(--rule)) 1px, transparent 1px)",
-        backgroundSize: `${DAY_WIDTH}px 100%`,
+        backgroundSize: `${dayWidth}px 100%`,
       }}
     >
       {days.map((day, index) =>
@@ -257,7 +293,7 @@ function LaneCanvas({
             key={`weekend-${index}`}
             aria-hidden
             className="pointer-events-none absolute bottom-0 top-0"
-            style={{ left: index * DAY_WIDTH, width: DAY_WIDTH, background: "hsl(var(--rule) / 0.35)" }}
+            style={{ left: index * dayWidth, width: dayWidth, background: "hsl(var(--rule) / 0.35)" }}
           />
         ) : null
       )}
@@ -266,7 +302,7 @@ function LaneCanvas({
         <div
           aria-hidden
           className="pointer-events-none absolute bottom-0 top-0 border-x border-dashed border-vermilion bg-vermilion/10"
-          style={{ left: dropHint.dayIndex * DAY_WIDTH, width: DAY_WIDTH }}
+          style={{ left: dropHint.dayIndex * dayWidth, width: dayWidth }}
         />
       )}
 
@@ -287,7 +323,7 @@ function LaneCanvas({
           if (!depStart) return false;
           return differenceInDays(addDays(depStart, dep?.estimatedDuration ?? 0), start) === 0;
         });
-        const indent = abuts ? Math.round(DAY_WIDTH / 4) : 0;
+        const indent = abuts ? Math.round(dayWidth / 4) : 0;
 
         return (
           <div key={task.id}>
@@ -295,8 +331,8 @@ function LaneCanvas({
               taskId={task.id}
               liveDays={barDrag?.taskId === task.id ? barDrag.days : 0}
               style={{
-                left: startOffset * DAY_WIDTH + 2 + indent,
-                width: Math.max(DAY_WIDTH - 4, duration * DAY_WIDTH - 4 - indent),
+                left: startOffset * dayWidth + 2 + indent,
+                width: Math.max(dayWidth - 4, duration * dayWidth - 4 - indent),
                 top: slot * (ROW_HEIGHT + ROW_GAP) + 7,
                 height: ROW_HEIGHT,
               }}
@@ -315,7 +351,7 @@ function LaneCanvas({
               <div
                 aria-hidden
                 className="pointer-events-none absolute z-10"
-                style={{ left: dueOffset * DAY_WIDTH + DAY_WIDTH / 2 - 6, top: slot * (ROW_HEIGHT + ROW_GAP) + 7, height: ROW_HEIGHT }}
+                style={{ left: dueOffset * dayWidth + dayWidth / 2 - 6, top: slot * (ROW_HEIGHT + ROW_GAP) + 7, height: ROW_HEIGHT }}
                 title={`Due ${format(due!, "dd MMM")}`}
               >
                 <div className="relative flex h-full w-3 flex-col items-center">
