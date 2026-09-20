@@ -12,7 +12,7 @@ import { Form, QuietButton } from "./chrome";
  * gets pointed at /mcp, and the token proves which tools it may call.
  * ───────────────────────────────────────────────────────────────────────── */
 
-export type Client = "code" | "desktop" | "cursor";
+export type Client = "code" | "desktop" | "cursor" | "connector";
 
 const ORIGIN = "https://ptd.example.com";
 const INVITE = "f9d9e8013717f6c0";
@@ -72,6 +72,18 @@ export const CLIENTS: Record<Client, { label: string; where: string; lang: strin
       "}",
     ].join("\n"),
   },
+  connector: {
+    label: "Claude.ai · ChatGPT",
+    where: "paste the URL, no token",
+    lang: "url",
+    snippet: [
+      `${ORIGIN}/mcp`,
+      "",
+      "# Settings → Connectors → Add. PTD registers the client itself",
+      "# (RFC 7591), you approve the seat on a consent screen, and the",
+      "# connector holds an OAuth 2.1 grant instead of a pasted token.",
+    ].join("\n"),
+  },
 };
 
 export default function SeatSnippets({ className }: { className?: string }) {
@@ -85,7 +97,8 @@ export default function SeatSnippets({ className }: { className?: string }) {
           <CodeBlock label="bash" code={REGISTER} />
           <p className="mt-2 text-[0.9rem] leading-relaxed text-ink-muted">
             It comes back with a <span className="font-numeric text-[0.8rem]">ptd_</span> token and a member seat
-            in your organization — no special path, the same role gate a person gets.
+            in your organization — no special path, the same role gate a person gets. Claude.ai and ChatGPT skip
+            this step and attach over OAuth 2.1 instead.
           </p>
         </Step>
 
@@ -100,7 +113,7 @@ export default function SeatSnippets({ className }: { className?: string }) {
           <CodeBlock label={`${active.lang} · ${active.where}`} code={active.snippet} testId="seat-snippet" />
         </Step>
 
-        <Step n={3} title="Check what it may call" note="85 tools, filtered by role">
+        <Step n={3} title="Check what it may call" note="filtered by its role">
           <CodeBlock label="bash" code={VERIFY} />
         </Step>
       </ol>

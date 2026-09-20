@@ -12,7 +12,7 @@ import { Form, QuietButton } from "./chrome";
  * ───────────────────────────────────────────────────────────────────────── */
 
 export type Role = "member" | "manager" | "admin";
-export type Door = "mcp" | "rest" | "slack" | "connector";
+export type Door = "mcp" | "rest" | "slack" | "telegram" | "teams" | "connector";
 
 export const RANK: Record<string, number> = { member: 1, manager: 2, admin: 3, owner: 4 };
 
@@ -24,6 +24,7 @@ export interface DoorAction {
   name: string;
   required: Role;
   args: Record<string, string | number>;
+  /** The chat verb. Slack, Telegram and Teams share one grammar on purpose. */
   slack: string;
   ask: string;
   surface: string;
@@ -35,7 +36,7 @@ export const ACTIONS: DoorAction[] = [
     name: "time_entry.stop",
     required: "member",
     args: { tokensUsed: 15400, apiCostUsd: 0.21 },
-    slack: "/ptd stop tokens=15400 cost=0.21",
+    slack: "stop tokens=15400 cost=0.21",
     ask: "Stop my timer — 15,400 tokens, 21 cents.",
     surface: "track",
   },
@@ -43,7 +44,7 @@ export const ACTIONS: DoorAction[] = [
     name: "task.complete",
     required: "member",
     args: { taskId: 118 },
-    slack: "/ptd done 118",
+    slack: "done 118",
     ask: "Mark task 118 done.",
     surface: "plan",
   },
@@ -51,7 +52,7 @@ export const ACTIONS: DoorAction[] = [
     name: "task.schedule",
     required: "manager",
     args: { taskId: 118, startDate: "2026-09-24", estimatedDuration: 3 },
-    slack: "/ptd schedule 118 2026-09-24 3d",
+    slack: "schedule 118 2026-09-24 3d",
     ask: "Put task 118 on the timeline for 24 September, three days.",
     surface: "plan",
   },
@@ -59,7 +60,7 @@ export const ACTIONS: DoorAction[] = [
     name: "task.set_priority",
     required: "manager",
     args: { taskId: 118, urgency: 8, impact: 8, effort: 2 },
-    slack: "/ptd priority 118 u=8 i=8 e=2",
+    slack: "priority 118 u=8 i=8 e=2",
     ask: "Score task 118 at urgency 8, impact 8, effort 2.",
     surface: "plan",
   },
@@ -67,7 +68,7 @@ export const ACTIONS: DoorAction[] = [
     name: "webhook.create",
     required: "admin",
     args: { url: "https://hooks.example.com/ptd", events: "task.completed" },
-    slack: "/ptd webhook add https://hooks.example.com/ptd",
+    slack: "webhook add https://hooks.example.com/ptd",
     ask: "Send task completions to our hooks endpoint.",
     surface: "org",
   },
@@ -75,8 +76,10 @@ export const ACTIONS: DoorAction[] = [
 
 const DOORS: { key: Door; label: string; meta: string }[] = [
   { key: "mcp", label: "MCP", meta: "POST /mcp · JSON-RPC 2.0" },
-  { key: "rest", label: "REST", meta: "POST /api/actions/<name>" },
+  { key: "rest", label: "REST", meta: "POST /api/actions/<name> · OpenAPI 3.1" },
   { key: "slack", label: "Slack", meta: "/ptd · linked identity" },
+  { key: "telegram", label: "Telegram", meta: "bot command · linked identity" },
+  { key: "teams", label: "Teams", meta: "bot command · linked identity" },
   { key: "connector", label: "Connector", meta: "Claude.ai · ChatGPT · OAuth 2.1" },
 ];
 
@@ -105,7 +108,11 @@ export function renderCall(door: Door, action: DoorAction): string {
         `  -d '${args}'`,
       ].join("\n");
     case "slack":
-      return action.slack;
+      return `/ptd ${action.slack}`;
+    case "telegram":
+      return `/ptd ${action.slack}`;
+    case "teams":
+      return `@PTD ${action.slack}`;
     case "connector":
       return [
         `# attached once over OAuth 2.1 — ${ORIGIN}/mcp`,
@@ -156,7 +163,7 @@ export default function DoorsPanel({ className }: { className?: string }) {
   const result = renderResult(role, action);
 
   return (
-    <Form title="One action, every door" meta="85 actions · one definition" className={className}>
+    <Form title="One action, every door" meta="over 150 actions · one definition each" className={className}>
       <div className="grid gap-4 sm:grid-cols-2">
         <fieldset className="min-w-0">
           <legend className="eyebrow mb-2">Your credential</legend>
@@ -236,8 +243,8 @@ export default function DoorsPanel({ className }: { className?: string }) {
           })}
         </ul>
         <p className="mt-4 text-[0.95rem] leading-relaxed text-ink-muted text-pretty">
-          The human-or-agent stamp on every line is decided server-side, from the credential that made the
-          call. A request cannot claim to be human.
+          The stamp on every line is decided server-side, from the credential that made the call. Humans and
+          agents go through the same gate, and a request cannot claim to be either one.
         </p>
       </div>
     </Form>

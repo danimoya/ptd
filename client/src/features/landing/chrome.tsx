@@ -124,6 +124,8 @@ export function InkButton({
   className,
   onClick,
   type = "button",
+  disabled,
+  testId,
 }: {
   to?: string;
   href?: string;
@@ -131,17 +133,20 @@ export function InkButton({
   className?: string;
   onClick?: () => void;
   type?: "button" | "submit";
+  disabled?: boolean;
+  testId?: string;
 }) {
   const classes = cn(
     "inline-flex items-center justify-center gap-2 border border-ink bg-ink px-5 py-2.5",
     "font-numeric text-[11px] uppercase tracking-[0.18em] text-parchment transition-all duration-150",
     "hover:-translate-x-px hover:-translate-y-px hover:bg-parchment hover:text-ink hover:shadow-stamp focus-ink",
+    disabled && "cursor-not-allowed opacity-50 hover:translate-x-0 hover:translate-y-0 hover:bg-ink hover:text-parchment hover:shadow-none",
     className
   );
-  if (to) return <Link to={to} className={classes}>{children}</Link>;
-  if (href) return <a href={href} className={classes}>{children}</a>;
+  if (to) return <Link to={to} data-testid={testId} className={classes}>{children}</Link>;
+  if (href) return <a href={href} data-testid={testId} className={classes}>{children}</a>;
   return (
-    <button type={type} onClick={onClick} className={classes}>
+    <button type={type} onClick={onClick} disabled={disabled} data-testid={testId} className={classes}>
       {children}
     </button>
   );
