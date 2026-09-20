@@ -28,7 +28,9 @@
 #
 # USAGE
 #   scripts/backup.sh [options]
-#     --mode snapshot|cold   snapshot (default, no downtime) or cold (stops the DB)
+#     --mode snapshot|cold|raw  snapshot dump (default, no downtime), cold dump (stops the DB),
+#                            or raw (archive of a crash-consistent copy of the data directory;
+#                            chosen automatically when DB_ENCRYPTION_KEY is set — see docs)
 #     --out DIR              where the files go (default: $BACKUP_DIR, else ./backups)
 #     --keep DAYS            delete older backups (default: $BACKUP_KEEP_DAYS, 14; 0 = keep all)
 #     --verify               restore the fresh dump into a scratch dir and discard it
@@ -165,7 +167,12 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-case "$MODE" in snapshot|cold) ;; *) die "--mode must be snapshot or cold" ;; esac
+case "$MODE" in snapshot|cold|raw) ;; *) die "--mode must be snapshot, cold or raw" ;; esac
+# An encrypted data directory cannot be dumped offline (HeliosDB-Nano #45: `dump` has no
+# config/key source), so the backup is the data directory itself — still encrypted at rest.
+if [ "$MODE" = "snapshot" ] && [ -n "${DB_ENCRYPTION_KEY:-}" ]; then
+  MODE=raw
+fi
 
 # ── where are we? ──────────────────────────────────────────────────────────
 # Being inside a container is the thing to detect, and "/data exists" is not it: a
@@ -217,6 +224,18 @@ backup_once() {
     rm -rf "$WORK"
     mkdir -p "$WORK"
     cp -a "$DATA_DIR" "$WORK/data"
+    if [ "$MODE" = "raw" ]; then
+      RAW_NAME="ptd-$TS.rocksdb.tgz"
+      tar czf "$OUT/$RAW_NAME" -C "$WORK" data || { rm -rf "$WORK"; die "raw archive failed"; }
+      rm -rf "$WORK/data"
+      (cd "$OUT" && sha256sum "$RAW_NAME" > "$RAW_NAME.sha256")
+      say "wrote $OUT/$RAW_NAME ($(du -h "$OUT/$RAW_NAME" | cut -f1), encrypted data directory)"
+      if [ "$VERIFY" = "1" ]; then
+        gzip -t "$OUT/$RAW_NAME" && tar tzf "$OUT/$RAW_NAME" | grep -q '^data/CURRENT$' || die "the raw archive did not verify"
+        say "verified: archive integrity and manifest present"
+      fi
+      DUMP_NAME="$RAW_NAME"
+    else
     heliosdb-nano dump -d "$WORK/data" -o "$OUT/$DUMP_NAME" --compression "$COMPRESSION" >"$WORK/dump.log" 2>&1 || {
       cat "$WORK/dump.log" >&2
       rm -rf "$WORK"
@@ -233,6 +252,7 @@ backup_once() {
       }
       say "verified:$(grep -E '^  Rows' "$WORK/verify.log" | tr -s ' ')"
       rm -rf "$WORK/verify"
+    fi
     fi
 
     if [ "$AUX" = "1" ]; then
@@ -265,6 +285,19 @@ backup_once() {
         }
       docker start "$DB_CONTAINER" >/dev/null
       say "$DB_CONTAINER restarted"
+    elif [ "$MODE" = "raw" ]; then
+      DUMP_NAME="ptd-$TS.rocksdb.tgz"
+      docker exec "$DB_CONTAINER" sh -c "
+        set -e
+        rm -rf '$REMOTE_WORK'; mkdir -p '$REMOTE_WORK'
+        cp -a '$DATA_DIR' '$REMOTE_WORK/data'
+        tar czf '$REMOTE_WORK/$DUMP_NAME' -C '$REMOTE_WORK' data
+        rm -rf '$REMOTE_WORK/data'
+      "
+      docker cp "$DB_CONTAINER:$REMOTE_WORK/$DUMP_NAME" "$OUT/$DUMP_NAME"
+      docker exec "$DB_CONTAINER" rm -rf "$REMOTE_WORK"
+      (cd "$OUT" && sha256sum "$DUMP_NAME" > "$DUMP_NAME.sha256")
+      say "wrote $OUT/$DUMP_NAME (encrypted data directory)"
     else
       docker exec "$DB_CONTAINER" sh -c "
         set -e
@@ -277,7 +310,10 @@ backup_once() {
       docker exec "$DB_CONTAINER" rm -rf "$REMOTE_WORK"
     fi
 
-    if [ "$VERIFY" = "1" ]; then
+    if [ "$VERIFY" = "1" ] && [ "$MODE" = "raw" ]; then
+      gzip -t "$OUT/$DUMP_NAME" && tar tzf "$OUT/$DUMP_NAME" | grep -q '^data/CURRENT$' || die "the raw archive did not verify"
+      say "verified: archive integrity and manifest present"
+    elif [ "$VERIFY" = "1" ]; then
       docker run --rm -v "$OUT:/out" --entrypoint heliosdb-nano "$DB_IMAGE" \
         restore -i "/out/$DUMP_NAME" -t /tmp/verify --verify >/dev/null || die "the fresh dump did not verify"
       say "verified the dump by restoring it into a throwaway container"
@@ -310,7 +346,7 @@ backup_once() {
   esac
   if [ "$KEEP" -gt 0 ]; then
     removed=0
-    for f in $(find "$OUT" -maxdepth 1 -type f \( -name 'ptd-*.heliodump' -o -name 'ptd-aux-*.tar.gz' \) -mtime "+$KEEP" 2>/dev/null); do
+    for f in $(find "$OUT" -maxdepth 1 -type f \( \( -name 'ptd-*.heliodump' -o -name 'ptd-*.rocksdb.tgz' -o -name 'ptd-*.rocksdb.tgz.sha256' \) -o -name 'ptd-aux-*.tar.gz' \) -mtime "+$KEEP" 2>/dev/null); do
       rm -f "$f"
       removed=$((removed + 1))
     done

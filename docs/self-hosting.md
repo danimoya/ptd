@@ -169,6 +169,9 @@ data-volume format change is the engine's business, not PTD's.
 
 ## Backups
 
+> **Encrypted stores.** When `DB_ENCRYPTION_KEY` is set, `heliosdb-nano dump` cannot open the data directory offline (HeliosDB-Nano issue #45), so `backup.sh` switches to `--mode raw`: it archives a crash-consistent copy of the data directory as `ptd-<stamp>.rocksdb.tgz` (+ `.sha256`). The archive stays encrypted at rest; restore it with `restore.sh --input <file>.rocksdb.tgz` and the **same** `DB_ENCRYPTION_KEY`. `--verify` checks archive integrity and the RocksDB manifest.
+
+
 `scripts/backup.sh` writes two files per run into a backup directory:
 
 | File | What it is |

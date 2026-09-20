@@ -31,6 +31,7 @@
 set -eu
 
 INPUT=""
+RAW=0
 AUX=""
 YES=0
 SCRATCH=0
@@ -43,6 +44,7 @@ DB_IMAGE="${PTD_DB_IMAGE:-ptd-db:4.40.0}"
 KEEP_DOWN=0
 
 say() { echo "[restore] $*"; }
+is_raw() { case "$1" in *.rocksdb.tgz) return 0 ;; *) return 1 ;; esac; }
 die() { echo "[restore] $*" >&2; exit 1; }
 
 while [ "$#" -gt 0 ]; do
@@ -89,10 +91,18 @@ if [ "$SCRATCH" = "1" ]; then
   STLS="ptd_restore_test_tls_$TS"
   SNAME="ptd-restore-test-$TS"
   say "restoring $FILE into the new volume $SVOL"
+  if is_raw "$INPUT"; then
+    docker run --rm -v "$SVOL:/data" -v "$DIR:/in:ro" --entrypoint sh "$DB_IMAGE" -c "tar xzf /in/$(basename "$INPUT") -C / && chown -R 999:999 /data" || die "raw restore into the scratch volume failed"
+    [ -n "${DB_ENCRYPTION_KEY:-}" ] || say "note: this archive is an encrypted data directory — start the scratch container with the same DB_ENCRYPTION_KEY"
+
+  else
+
   docker run --rm -v "$SVOL:/data" -v "$DIR:/in:ro" --entrypoint heliosdb-nano "$DB_IMAGE" \
     restore -i "/in/$FILE" -t /data --verify
+
+  fi
   say "starting $SNAME on 127.0.0.1:$PORT"
-  docker run -d --name "$SNAME" -e "DB_PASSWORD=${DB_PASSWORD:-scratch}" \
+  docker run -d --name "$SNAME" -e "DB_PASSWORD=${DB_PASSWORD:-scratch}" ${DB_ENCRYPTION_KEY:+-e "DB_ENCRYPTION_KEY=$DB_ENCRYPTION_KEY"} \
     -v "$SVOL:/data" -v "$STLS:/tls" -p "127.0.0.1:$PORT:5432" "$DB_IMAGE" >/dev/null
   sleep 4
   cat <<EOF
@@ -132,8 +142,12 @@ if [ -n "$NONEMPTY" ]; then
 fi
 
 say "restoring $FILE"
+if is_raw "$INPUT"; then
+  docker run --rm -v "$VOLUME:/data" -v "$DIR:/in:ro" --entrypoint sh "$DB_IMAGE" -c "tar xzf /in/$(basename "$INPUT") -C / && chown -R 999:999 /data" || die "raw restore failed"
+else
 docker run --rm -v "$VOLUME:/data" -v "$DIR:/in:ro" --entrypoint heliosdb-nano "$DB_IMAGE" \
   restore -i "/in/$FILE" -t /data --verify
+fi
 
 if [ -n "$AUX" ]; then
   [ -f "$AUX" ] || die "no such aux archive: $AUX"

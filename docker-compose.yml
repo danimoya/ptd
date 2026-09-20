@@ -65,6 +65,7 @@ services:
       BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
       BACKUP_COMPRESSION: ${BACKUP_COMPRESSION:-gzip}
       BACKUP_VERIFY: ${BACKUP_VERIFY:-0}
+      DB_ENCRYPTION_KEY: ${DB_ENCRYPTION_KEY:-}
     volumes:
       - ./scripts/backup.sh:/usr/local/bin/ptd-backup:ro
       - ptd_db_data:/data:ro
