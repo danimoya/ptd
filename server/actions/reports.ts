@@ -454,7 +454,11 @@ defineAction({
         month: invoices.month,
         year: invoices.year,
         status: invoices.status,
-        totalMinutes: invoices.totalAmount,
+        // `total_amount` held minutes before rates existed and holds the amount in
+        // cents once one does, so the dedicated column is read first and the old
+        // one is only a fallback for rows written before Phase 4.
+        totalMinutes: invoices.totalMinutes,
+        legacyTotal: invoices.totalAmount,
         pdfUrl: invoices.pdfUrl,
         reference: invoices.reference,
         currency: invoices.currency,
@@ -476,7 +480,7 @@ defineAction({
       ...r,
       periodLabel: monthLabel(r.month, r.year),
       pdfUrl: r.pdfUrl ?? invoicePdfPath(r.id),
-      totalMinutes: r.totalMinutes ?? 0,
+      totalMinutes: r.totalMinutes ?? r.legacyTotal ?? 0,
       reference: r.reference ?? invoiceReference(r.year, r.month, r.id),
       verifyUrl: r.verifyToken ? verifyUrlFor(r.verifyToken) : null,
       voided: r.voidedAt !== null,
