@@ -67,7 +67,7 @@ describe("the backup schedule", () => {
 
 describe("the scripts' own guard rails", () => {
   it("backup.sh rejects an unknown mode and an unknown option", async () => {
-    await expect(exec("sh", [backup, "--mode", "warm", "--once"])).rejects.toThrow(/snapshot or cold/);
+    await expect(exec("sh", [backup, "--mode", "warm", "--once"])).rejects.toThrow(/snapshot, cold or raw/);
     await expect(exec("sh", [backup, "--nonsense"])).rejects.toThrow(/unknown option/);
   });
 
