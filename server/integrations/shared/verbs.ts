@@ -2,6 +2,10 @@ import { TASK_STATUSES } from "../../../db/schema";
 import { ActionError, getAction, type ActionContext } from "../../actions/registry";
 import { hasRole } from "../../types";
 import {
+  ephemeral,
+  escape,
+  rec,
+  str,
   renderDone,
   renderLog,
   renderNext,
@@ -199,6 +203,24 @@ export const VERBS: Verb[] = [
       return { taskId, ...(note ? { note } : {}) };
     },
     render: (result) => renderDone(result),
+  },
+  {
+    name: "comment",
+    action: "task.comment_add",
+    tail: "<TASK-KEY> <text>",
+    summary: "add a comment to a task",
+    build: async (input) => {
+      const usage = example(input, "comment PTD-12 waiting on the vendor");
+      const taskId = await taskIdFrom(input, input.args[0], usage);
+      const body = input.args.slice(1).join(" ").trim();
+      if (!body) throw new ActionError("invalid", `What should the comment say? — \`${usage}\``);
+      return { taskId, body };
+    },
+    render: (result) => {
+      const comment = rec(rec(result).comment);
+      const body = (str(comment.body) ?? "").split("\n")[0];
+      return ephemeral(["*Comment added.*", `> ${escape(body.slice(0, 240))}${body.length > 240 ? "…" : ""}`]);
+    },
   },
   {
     name: "who",

@@ -70,6 +70,117 @@ Every mutation writes one append-only `task_events` row — who changed what, wh
 and through which adapter (`web`, `mcp`, `api`, `import`, plus one value per chat or
 code-host integration) — and fires one webhook. `task.history` reads it back.
 
+## Depth on a card: comments, files, recurrence, custom fields
+
+Four things hang off a task besides its own columns. All four are org-scoped and
+go through the same registry as everything else, so an agent over MCP, a chat bot
+and the card editor can all reach them.
+
+### Comments
+
+`task.comment_add`, `task.comment_list`, `task.comment_delete`.
+
+Any **member** may comment on any card in their organization — a comment is the
+cheapest way for someone who cannot edit a card to say something about it. A
+comment may be deleted by its author, or by a **manager** and above.
+
+Bodies are stored exactly as typed and rendered as **markdown-lite**: `**bold**`,
+`_italic_`, `` `code` ``, `[text](url)` and bare links, and nothing else. The
+rendering happens where it is displayed and is sanitised there, because a comment
+can be written by an agent over MCP or by a chat bot — the stored text is
+untrusted by construction. Links are `http(s)`/`mailto` only.
+
+Each comment writes one `updated` history row noted *commented*, so the card's
+own history says a conversation happened; webhook consumers get
+`task.commented` rather than another `task.updated` to sniff.
+
+From chat, on all three surfaces at once: `/ptd comment PTD-12 waiting on the vendor`.
+
+### Attachments
+
+Bytes do not travel through an action — JSON is the wrong envelope for 25 MB of
+PDF — so files use two routes, and the verbs stay actions:
+
+| | |
+|---|---|
+| `PUT /api/plan/tasks/:id/attachments?filename=…` | raw body, `Content-Type: application/octet-stream`, up to **25 MB** |
+| `GET /api/plan/attachments/:id` | the bytes back, org-scoped |
+| `task.attachment_list` / `task.attachment_delete` | the card's files, and removing one (uploader, or manager and above) |
+
+Storage is content-addressed under `PTD_FILES_DIR` (`./data/files` in
+development, the `ptd_files` volume at `/data/files` under compose):
+
+```
+<root>/<orgId>/<sha256[0:2]>/<sha256[2:4]>/<sha256>
+```
+
+The path is built from the organization id and the sha256 of the bytes, which are
+hashed as they are written. **The filename is a label and nothing else** — so
+`?filename=../../etc/passwd` is stored as `passwd` and cannot influence where
+anything is written, and a `storage_key` that is not exactly that shape is
+refused on the way out too. Identical bytes are stored once per organization: a
+second upload of the same file reuses the blob, and deleting a row only unlinks
+it when the last reference goes.
+
+On the way back, images, PDFs and plain text render in place; **everything else
+is forced to download**, and nothing is served with a type the browser might
+treat as script (`image/svg+xml` is deliberately not on the inline list).
+
+### Recurring tasks
+
+`task.recur_set` (**manager**) turns a card into a template that clones itself
+into a new backlog card on a schedule; `task.recur_list` reads them back.
+
+| Rule | Fires |
+|---|---|
+| `daily` | every day |
+| `weekdays` | Monday–Friday |
+| `weekly:mon,wed` | those weekdays |
+| `monthly:15` | the 15th, clamped to the last day of a shorter month |
+| `every:3d`, `every:2w` | a fixed cadence from the day the rule was set |
+
+Any of them may carry `at:09:00`, which defaults to 09:00. **Times are UTC in
+v1** — an organization-local clock needs a timezone on the organization, which
+the schema does not carry yet, so the preview in the card editor says UTC out
+loud rather than implying local time.
+
+A scheduler ticks every 60 seconds (disable it with `PTD_SCHEDULER=0`) and claims
+each due row with an `UPDATE … WHERE next_run_at <= now()` before it clones
+anything, so two PTD processes against one database cannot both fire the same
+occurrence. The clone copies title, description, stream, app, assignee, estimate,
+tags, the priority inputs and every custom value; it does **not** copy dates,
+dependencies or status — an instance starts in the backlog with nothing blocking
+it. It takes the external key `<templateKey>-<yyyymmdd>` and a `created` history
+row noted *recurring*, `via: api`.
+
+### Custom fields
+
+`field.create` / `field.update` / `field.archive` (**manager**), `field.list`
+(member), and `task.set_custom` to write values — a member may write only to a
+card assigned to them, a manager to any card.
+
+A field is defined once for the organization and holds a value per card. Its
+`key` is derived from the name (`Customer severity` → `customer_severity`) and
+then fixed, so renaming the field changes its label and not its identity, and a
+payload an agent saved keeps working. Seven kinds, each validated on write:
+
+| Kind | Accepts |
+|---|---|
+| `text` | a string, up to 2000 characters |
+| `number` | a number (a numeric string is coerced) |
+| `date` | an ISO date, stored as a calendar day |
+| `select` | exactly one of the field's options |
+| `multiselect` | any of them, de-duplicated |
+| `checkbox` | `true` / `false` |
+| `url` | an `http(s)` URL — nothing else is a link |
+
+`null` clears a value, and a key the organization does not define is an error
+rather than a silent no-op, so a typo in an agent's payload surfaces at once.
+Values come back on `task.get` and `task.list` as `custom: { key: value }`, and
+`task.custom_values` reads many cards at once for a table. Fields are archived,
+never deleted: cards keep what they recorded, the field just stops being offered
+and its values stop being returned.
+
 ## Priority: 0–100
 
 ```

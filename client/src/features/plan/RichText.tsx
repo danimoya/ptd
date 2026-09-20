@@ -1,7 +1,6 @@
 import { useEffect } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import Underline from "@tiptap/extension-underline";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import DOMPurify from "dompurify";
@@ -22,7 +21,12 @@ interface RichEditorProps {
 
 export function RichEditor({ value, onChange, placeholder }: RichEditorProps) {
   const editor = useEditor({
-    extensions: [StarterKit.configure({ heading: { levels: [3, 4] } }), Underline, TaskList, TaskItem.configure({ nested: true })],
+    // Underline is NOT listed here: StarterKit 3.x already bundles
+    // @tiptap/extension-underline, and registering it a second time is what
+    // produced tiptap's "Duplicate extension names found: ['underline']"
+    // warning — with two copies, the second silently wins and the toolbar's
+    // isActive("underline") could disagree with the mark in the document.
+    extensions: [StarterKit.configure({ heading: { levels: [3, 4] } }), TaskList, TaskItem.configure({ nested: true })],
     content: value || "",
     editorProps: {
       attributes: {

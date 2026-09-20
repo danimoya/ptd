@@ -30,6 +30,66 @@ export interface PlanTask {
   end: string | null;
   /** dueDate − (startDate + duration) in days; null when either is missing. */
   slackDays: number | null;
+  /** Custom field values, keyed by field key. Always present from `task.list`/`task.get`; `{}` when the org defines no fields. */
+  custom?: CustomValues;
+}
+
+/** Custom field values on a card, keyed by field key — `custom` on the wire. */
+export type CustomValues = Record<string, unknown>;
+
+export type CustomFieldKind = "text" | "number" | "date" | "select" | "multiselect" | "checkbox" | "url";
+
+/** A custom field definition as `field.list` returns it. */
+export interface CustomFieldDef {
+  id: number;
+  name: string;
+  key: string;
+  kind: CustomFieldKind | string;
+  options: string[];
+  position: number;
+  archived: boolean;
+  createdAt: string | null;
+}
+
+/** One comment as `task.comment_list` returns it. Bodies are markdown-lite source, never HTML. */
+export interface TaskComment {
+  id: number;
+  taskId: number;
+  body: string;
+  via: string;
+  author: { userId: number | null; displayName: string | null; isAgent: boolean };
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+/** One attachment as `task.attachment_list` returns it. `url` is the authenticated download route. */
+export interface TaskAttachment {
+  id: number;
+  taskId: number;
+  filename: string;
+  mime: string;
+  sizeBytes: number;
+  sha256: string;
+  /** True when the browser may render it in place rather than downloading it. */
+  inline: boolean;
+  uploadedBy: { userId: number | null; displayName: string | null; isAgent: boolean };
+  createdAt: string | null;
+  url: string;
+}
+
+/** One recurrence as `task.recur_list` returns it. `preview` is the server's human reading of `rule`. */
+export interface TaskRecurrence {
+  id: number;
+  templateTaskId: number;
+  templateTitle: string | null;
+  templateKey: string | null;
+  rule: string;
+  preview: string;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  active: boolean;
+  createdBy: number | null;
+  createdAt: string | null;
 }
 
 export interface PlanStream {

@@ -64,6 +64,14 @@ export interface RecordEventArgs {
   note?: string | null;
   /** Extra context for webhook consumers only — never persisted on the row. */
   payload?: Record<string, unknown>;
+  /**
+   * Override the outbound webhook's kind, which is `task.<kind>` by default.
+   * Comments are the reason it exists: the history row is an ordinary `updated`
+   * (that is what a reader of the card's history wants to see), but a webhook
+   * consumer wants `task.commented` rather than another `task.updated` it has to
+   * sniff the note for.
+   */
+  webhookKind?: string;
 }
 
 /**
@@ -89,7 +97,7 @@ export async function recordEvent(args: RecordEventArgs): Promise<void> {
   }
   try {
     await dispatchWebhooks(args.orgId, {
-      kind: `task.${args.kind}`,
+      kind: args.webhookKind ?? `task.${args.kind}`,
       taskId: args.taskId,
       actor: { userId: args.actor.userId, label: args.actor.label, isAgent: args.actor.isAgent },
       payload: { changes: args.changes ?? null, note: args.note ?? null, via: args.actor.via, ...(args.payload ?? {}) },

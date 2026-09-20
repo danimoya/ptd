@@ -10,3 +10,4 @@ coverage/
 *.log
 CLAUDE.md
 *.local.md
+data/

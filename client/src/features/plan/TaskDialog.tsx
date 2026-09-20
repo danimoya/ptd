@@ -7,10 +7,15 @@ import { RichEditor } from "./RichText";
 import { DependencyPicker } from "./DependencyPicker";
 import { HistoryPanel } from "./HistoryPanel";
 import { TimePanel } from "./TimePanel";
+import { CommentsPanel } from "./CommentsPanel";
+import { AttachmentsPanel } from "./AttachmentsPanel";
+import { CustomFieldsSection } from "./CustomFieldsSection";
+import { RecurrenceField } from "./RecurrenceField";
 import { AppPicker, AssigneePicker, DatePicker, Field, PriorityScore, ScoreSlider, StreamCombobox, TagEditor } from "./pickers";
 import { dayKey, dayOf, formulaScore, pad4, priorityBand, toDayString } from "./logic";
-import { useStreamMutations, useTaskMutations } from "./api";
-import type { PlanApp, PlanStream, PlanTask } from "./types";
+import { useSetCustom, useStreamMutations, useTaskMutations } from "./api";
+import { canAccess, useMe } from "@/hooks/use-me";
+import type { CustomValues, PlanApp, PlanStream, PlanTask } from "./types";
 
 interface TaskDialogProps {
   open: boolean;
@@ -39,6 +44,8 @@ export function TaskDialog({ open, onOpenChange, task, tasks, streams, apps, mem
   const isNew = task === null;
   const { create, update, complete, remove, setPriority } = useTaskMutations();
   const streamMutations = useStreamMutations();
+  const setCustom = useSetCustom();
+  const { me, role } = useMe();
 
   const [title, setTitle] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
@@ -58,6 +65,9 @@ export function TaskDialog({ open, onOpenChange, task, tasks, streams, apps, mem
   const [manualScore, setManualScore] = useState(task && task.prioritySource === "manual" ? String(task.priorityScore) : "");
   const [priorityNote, setPriorityNote] = useState(task?.priorityNote ?? "");
   const [tags, setTags] = useState<string[]>(task?.tags ?? []);
+  // Custom values are draft state like every other field: they are written by
+  // `task.set_custom` when the card is saved, not on every keystroke.
+  const [custom, setCustomDraft] = useState<CustomValues>({ ...(task?.custom ?? {}) });
   const [confirmingDone, setConfirmingDone] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -67,6 +77,9 @@ export function TaskDialog({ open, onOpenChange, task, tasks, streams, apps, mem
   const effective = manual ?? formula;
   const band = priorityBand(effective);
   const otherTasks = useMemo(() => tasks.filter((t) => !task || t.id !== task.id), [tasks, task]);
+  /** `task.set_custom` lets a member write only to a card assigned to them. */
+  const canEditCustom = canAccess(role, "manager") || (isNew ? true : task!.assignedTo === me?.user.id);
+  const onCustomChange = (key: string, value: unknown) => setCustomDraft((prev) => ({ ...prev, [key]: value }));
 
   const close = (next: boolean) => {
     if (!next) {
@@ -102,6 +115,9 @@ export function TaskDialog({ open, onOpenChange, task, tasks, streams, apps, mem
         if (manual !== null || priorityNote.trim()) {
           await setPriority.mutateAsync({ taskId: created.task.id, urgency, impact, effort, manualScore: manual, note: priorityNote.trim() || undefined });
         }
+        // Custom values need the card to exist first, so they follow the create.
+        const fresh = customPatch({}, custom);
+        if (Object.keys(fresh).length > 0) await setCustom.mutateAsync({ taskId: created.task.id, values: fresh });
       } else {
         const patch: Record<string, unknown> = { taskId: task!.id };
         if (title.trim() !== task!.title) patch.title = title.trim();
@@ -122,6 +138,11 @@ export function TaskDialog({ open, onOpenChange, task, tasks, streams, apps, mem
         if (effort !== task!.effort) patch.effort = effort;
         if (!sameTags(tags, task!.tags)) patch.tags = tags;
         if (Object.keys(patch).length > 1) await update.mutateAsync(patch);
+
+        const customChanges = customPatch(task!.custom ?? {}, custom);
+        if (canEditCustom && Object.keys(customChanges).length > 0) {
+          await setCustom.mutateAsync({ taskId: task!.id, values: customChanges });
+        }
 
         const hadManual = task!.prioritySource === "manual";
         const manualChanged = manual !== (hadManual ? task!.priorityScore : null);
@@ -256,8 +277,15 @@ export function TaskDialog({ open, onOpenChange, task, tasks, streams, apps, mem
             <TagEditor value={tags} onChange={setTags} />
           </Field>
 
+          {/* A recurrence needs a card to clone, so it is offered once the card exists. */}
+          {!isNew && <RecurrenceField taskId={task!.id} open={open} />}
+
+          <CustomFieldsSection values={custom} onChange={onCustomChange} disabled={!canEditCustom} />
+
           {!isNew && <TimePanel taskId={task!.id} open={open} />}
           {!isNew && <HistoryPanel taskId={task!.id} open={open} />}
+          {!isNew && <CommentsPanel taskId={task!.id} open={open} />}
+          {!isNew && <AttachmentsPanel taskId={task!.id} open={open} />}
 
           <div className="flex flex-wrap items-center gap-2 rule-t pt-3">
             {!isNew && !task!.completed && (
@@ -322,6 +350,22 @@ function sameIds(a: number[], b: number[] | undefined): boolean {
   const left = [...a].sort((x, y) => x - y);
   const right = [...(b ?? [])].sort((x, y) => x - y);
   return left.length === right.length && left.every((v, i) => v === right[i]);
+}
+
+/**
+ * Only the custom keys that actually moved, with `null` for a cleared one —
+ * `task.set_custom` treats a key it is handed as an instruction, so sending the
+ * whole bag every save would rewrite values the user never touched.
+ */
+function customPatch(before: CustomValues, after: CustomValues): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    const a = before[key] ?? null;
+    const b = after[key] ?? null;
+    if (JSON.stringify(a) === JSON.stringify(b)) continue;
+    out[key] = b;
+  }
+  return out;
 }
 
 function sameTags(a: string[], b: string[] | undefined): boolean {

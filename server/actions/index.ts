@@ -15,4 +15,5 @@ import "./github";
 import "./telegram";
 import "./teams";
 import "./usage";
+import "./workflow";
 export * from "./registry";

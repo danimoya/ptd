@@ -38,6 +38,7 @@ import {
   updateStream,
 } from "../plan/streamOps";
 import { actorFrom, diffTask, listEventsForTask, recordEvent, summariseChanges } from "../plan/taskEvents";
+import { customValuesFor, customValuesMap } from "../plan/customFields";
 
 /**
  * Plan surface actions — the the original board tool set, re-cut for PTD's org/stream/app
@@ -82,7 +83,11 @@ defineAction({
     if ("appId" in args) rows = rows.filter((t) => (t.appId ?? null) === (args.appId ?? null));
     if ("assignedTo" in args) rows = rows.filter((t) => (t.assignedTo ?? null) === (args.assignedTo ?? null));
     rows.sort((a, b) => b.priorityScore - a.priorityScore || a.id - b.id);
-    return { count: rows.length, tasks: rows.map(serializeTask) };
+    // One query for the whole org's custom values, not one per card — see
+    // server/plan/customFields.ts. `custom` is always present, `{}` when the
+    // organization defines no fields, so a client never has to branch on it.
+    const custom = await customValuesMap(ctx.orgId);
+    return { count: rows.length, tasks: rows.map((t) => ({ ...serializeTask(t), custom: custom.get(t.id) ?? {} })) };
   },
 });
 
@@ -111,7 +116,7 @@ defineAction({
       : [null];
 
     return {
-      task: serializeTask(task),
+      task: { ...serializeTask(task), custom: await customValuesFor(ctx.orgId, task.id) },
       stream: stream ?? null,
       app: app ?? null,
       assignee: assignee ?? null,
