@@ -9,6 +9,7 @@ import { validate } from "./validation";
 import { hasRole, isRole, type AuthenticatedRequest, type OrgRequest } from "./types";
 import { assertWithinPlan } from "./billing/limits";
 import { ActionError } from "./actions/registry";
+import { invitationUrl, sendInvitationEmail } from "./email/send";
 
 /**
  * Binds req.org = {id, role}. Order of precedence: X-Org-Id header, ?orgId,
@@ -41,6 +42,35 @@ export function requireRole(min: Role) {
     if (!hasRole(r.org.role, min)) return res.status(403).json({ error: "Insufficient permissions" });
     next();
   };
+}
+
+/* ── Invitations ─────────────────────────────────────────────────────── */
+
+/** How long an invitation stands: long enough to survive a holiday, short enough to expire. */
+export const INVITATION_TTL_MS = 7 * 86_400_000;
+
+export async function orgNameOf(orgId: number): Promise<string> {
+  const [org] = await db.select({ name: organizations.name }).from(organizations).where(eq(organizations.id, orgId)).limit(1);
+  return org?.name ?? "your organization";
+}
+
+/**
+ * Mail one invitation row.
+ *
+ * Exported so `invitation.resend` sends exactly the letter the original POST
+ * sent — one template, one link shape, one place to change either. It cannot
+ * throw: `sendLetter` reports a refusal as `{ sent: false, reason }`, so an
+ * unreachable SMTP host never turns a created invitation into a 500.
+ */
+export function mailInvitation(invite: typeof invitations.$inferSelect, orgName: string, inviterName?: string | null) {
+  return sendInvitationEmail({
+    orgName,
+    role: invite.role,
+    email: invite.email,
+    inviterName: inviterName ?? null,
+    token: invite.token,
+    expiresAt: invite.expiresAt,
+  });
 }
 
 const createOrgSchema = z.object({ name: z.string().min(1).max(255) });
@@ -90,9 +120,45 @@ export function registerOrgRoutes(app: Express) {
     const r = req as OrgRequest;
     const [row] = await db
       .insert(invitations)
-      .values({ orgId: r.org.id, email: req.body.email, role: req.body.role, token: randomBytes(24).toString("hex"), invitedBy: r.user[0].id, expiresAt: new Date(Date.now() + 7 * 86_400_000) })
+      .values({ orgId: r.org.id, email: req.body.email, role: req.body.role, token: randomBytes(24).toString("hex"), invitedBy: r.user[0].id, expiresAt: new Date(Date.now() + INVITATION_TTL_MS) })
       .returning();
-    res.status(201).json(row);
+    // The letter is a courtesy, not the mechanism: `acceptUrl` comes back either
+    // way so an admin on a deployment without SMTP can paste the link themselves.
+    const delivery = await mailInvitation(row, await orgNameOf(r.org.id), r.user[0].displayName);
+    res.status(201).json({ ...row, acceptUrl: invitationUrl(row.token), delivery });
+  });
+
+  /**
+   * Public: what an invitation link is for, so `/auth?invite=…` can name the
+   * organization before anyone signs in. Deliberately thin — the org's name, the
+   * role offered, the address it is bound to, and whether it is still good. The
+   * token is 48 hex characters, so enumeration is not a threat; guessing one is
+   * the same problem as guessing a session.
+   */
+  app.get("/api/invitations/:token", async (req: Request, res: Response) => {
+    const token = String(req.params.token ?? "");
+    if (!/^[a-f0-9]{16,64}$/i.test(token)) return res.status(404).json({ error: "Invitation not found" });
+    const [invite] = await db
+      .select({
+        email: invitations.email,
+        role: invitations.role,
+        expiresAt: invitations.expiresAt,
+        acceptedAt: invitations.acceptedAt,
+        orgName: organizations.name,
+      })
+      .from(invitations)
+      .innerJoin(organizations, eq(invitations.orgId, organizations.id))
+      .where(eq(invitations.token, token))
+      .limit(1);
+    if (!invite) return res.status(404).json({ error: "Invitation not found" });
+    res.json({
+      orgName: invite.orgName,
+      role: invite.role,
+      email: invite.email,
+      expired: invite.expiresAt < new Date(),
+      accepted: invite.acceptedAt !== null,
+      expiresAt: invite.expiresAt,
+    });
   });
 
   app.get("/api/orgs/current/invitations", auth, resolveOrg, requireRole("admin"), async (req: Request, res: Response) => {

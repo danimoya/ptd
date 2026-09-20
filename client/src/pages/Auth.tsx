@@ -1,18 +1,29 @@
 // Classic JSX transform (tsconfig keeps jsx: "preserve"), so React must be in scope.
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowRight, Check, Copy, Loader2 } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CopyRow, ErrorNote, Field, KV, Section, Submit } from "@/features/auth/bits";
+import { acceptInvitation, keepSession, lookupInvitation, signIn, signUp, type InviteInfo } from "@/features/auth/api";
+import InvitePanel from "@/features/auth/InvitePanel";
+import ForgotPanel from "@/features/auth/ForgotPanel";
+import ResetPanel from "@/features/auth/ResetPanel";
 
 /* ─────────────────────────────────────────────────────────────────────────
  * The way in.
  *
- * Three doors on one plate: sign in, open an organization, or — if the
- * visitor is an agent — take a seat and walk away with a token. The public
- * page carries the argument; this page only takes credentials.
+ * Five doors on one plate: sign in, open an organization, take an agent seat,
+ * ask for a password-reset link, or set a new password from one. The public page
+ * carries the argument; this page only takes credentials.
+ *
+ * Two of the five are reached by link rather than by choice. `?invite=<token>`
+ * names the organization before anything is typed and joins it on the way in;
+ * `?reset=<token>` opens straight into the new-password form. Both read their
+ * token from the query string and never from storage, so a link forwarded to the
+ * wrong person is still just a link.
  * ───────────────────────────────────────────────────────────────────────── */
 
-type Mode = "login" | "register" | "agent";
+type Mode = "login" | "register" | "agent" | "forgot" | "reset";
 
 interface AgentSignupResult {
   user: { id: number; email: string };
@@ -24,16 +35,21 @@ interface AgentSignupResult {
   manifest?: { mcp?: { tools?: { name: string; title: string }[] } };
 }
 
-function modeFromQuery(value: string | null): Mode {
+function modeFromQuery(params: URLSearchParams): Mode {
+  if (params.get("reset")) return "reset";
+  const value = params.get("mode");
   if (value === "register") return "register";
   if (value === "agent") return "agent";
+  if (value === "forgot") return "forgot";
   return "login";
 }
 
 export default function Auth() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const [mode, setMode] = useState<Mode>(() => modeFromQuery(params.get("mode")));
+  const resetToken = params.get("reset") ?? "";
+  const inviteToken = params.get("invite") ?? "";
+  const [mode, setMode] = useState<Mode>(() => modeFromQuery(params));
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -42,40 +58,76 @@ export default function Auth() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [invite, setInvite] = useState<InviteInfo | null>(null);
+  const [joined, setJoined] = useState<string | null>(null);
+
   const [agentName, setAgentName] = useState("");
   const [inviteCode, setInviteCode] = useState("");
   const [agentEmail, setAgentEmail] = useState("");
   const [agentResult, setAgentResult] = useState<AgentSignupResult | null>(null);
+
+  // What the invitation is for, and the address it is bound to. A token the
+  // server will not vouch for simply produces no panel.
+  useEffect(() => {
+    if (!inviteToken) return;
+    let live = true;
+    lookupInvitation(inviteToken).then((info) => {
+      if (!live || !info) return;
+      setInvite(info);
+      setEmail((current) => current || info.email);
+      // An address with no account yet is a registration, not a sign-in; the
+      // switcher is still there if that guess is wrong.
+      if (info.accepted) setMode("login");
+    });
+    return () => {
+      live = false;
+    };
+  }, [inviteToken]);
 
   const switchTo = (next: Mode) => {
     setMode(next);
     setError(null);
   };
 
+  /** Land in the app. A reload so `useMe` refetches against the new token. */
+  const enter = () => {
+    navigate("/");
+    window.location.reload();
+  };
+
   const submit = async () => {
     setBusy(true);
     setError(null);
     try {
-      const payload: Record<string, string> = { email: email.trim(), password };
-      if (mode === "register") {
-        if (displayName.trim()) payload.displayName = displayName.trim();
-        if (orgName.trim()) payload.orgName = orgName.trim();
+      const result =
+        mode === "register"
+          ? await signUp({
+              email: email.trim(),
+              password,
+              ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
+              ...(orgName.trim() ? { orgName: orgName.trim() } : {}),
+            })
+          : await signIn(email.trim(), password);
+      if (!result.token) throw new Error("No token came back — try again");
+      keepSession(result.token, result.user?.email ?? email.trim());
+
+      // With an invitation in hand, joining is part of coming in. A refusal here
+      // (wrong address, expired link) is reported without throwing the session
+      // away — the caller is signed in either way, and can carry on.
+      if (inviteToken && invite && !invite.accepted && !invite.expired) {
+        try {
+          const accepted = await acceptInvitation(inviteToken, result.token);
+          keepSession(result.token, result.user?.email ?? email.trim(), accepted.orgId);
+          setJoined(invite.orgName);
+        } catch (e) {
+          setError(
+            `${e instanceof Error ? e.message : "The invitation could not be accepted"} — you are signed in, but not yet on that organization's roll.`
+          );
+          setBusy(false);
+          return;
+        }
       }
-      const response = await fetch(`/api/auth/${mode}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.message || data.error || "Those credentials were not accepted");
-      }
-      const data = await response.json();
-      if (!data.token) throw new Error("No token came back — try again");
-      localStorage.setItem("token", data.token);
-      if (data.user?.email) localStorage.setItem("userEmail", data.user.email);
-      navigate("/");
-      window.location.reload();
+      enter();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not sign you in");
     } finally {
@@ -108,18 +160,30 @@ export default function Auth() {
   const heading = agentResult
     ? "Save the token"
     : mode === "register"
-      ? "Create an organization"
+      ? invite && !invite.accepted && !invite.expired
+        ? `Join ${invite.orgName}`
+        : "Create an organization"
       : mode === "agent"
         ? "Take a seat"
-        : "Sign in";
+        : mode === "forgot"
+          ? "Forgotten password"
+          : mode === "reset"
+            ? "Set a new password"
+            : "Sign in";
 
   const subhead = agentResult
     ? "It is shown exactly once. Copy it into the agent's config before you leave this page."
     : mode === "register"
-      ? "One organization, four surfaces, every person and agent on the same roll."
+      ? invite && !invite.accepted && !invite.expired
+        ? `Create an account for ${invite.email} and you are on the roll as ${invite.role}.`
+        : "One organization, four surfaces, every person and agent on the same roll."
       : mode === "agent"
         ? "Open a seat for an AI agent — bearer-token auth, ready for MCP, REST and the connectors."
-        : "Your work is where you left it.";
+        : mode === "forgot"
+          ? "A single-use link, good for thirty minutes."
+          : mode === "reset"
+            ? "One password, and you are back where you left off."
+            : "Your work is where you left it.";
 
   return (
     <div className="grain min-h-[100dvh]">
@@ -139,9 +203,7 @@ export default function Auth() {
         </div>
 
         <main className="flex-1">
-          <h1 className="font-display text-[2rem] leading-tight tracking-[-0.025em] text-ink sm:text-[2.4rem]">
-            {heading}
-          </h1>
+          <h1 className="font-display text-[2rem] leading-tight tracking-[-0.025em] text-ink sm:text-[2.4rem]">{heading}</h1>
           <p className="mt-2 mb-8 text-[1rem] leading-relaxed text-ink-muted text-pretty">{subhead}</p>
 
           {agentResult ? (
@@ -155,6 +217,10 @@ export default function Auth() {
                 setAgentEmail("");
               }}
             />
+          ) : mode === "reset" ? (
+            <ResetPanel token={resetToken} onDone={enter} onBack={() => switchTo("login")} />
+          ) : mode === "forgot" ? (
+            <ForgotPanel email={email} onEmail={setEmail} onBack={() => switchTo("login")} />
           ) : mode === "agent" ? (
             <form
               className="space-y-5"
@@ -217,7 +283,9 @@ export default function Auth() {
                 submit();
               }}
             >
-              <Field label="Email">
+              {invite && <InvitePanel invite={invite} />}
+
+              <Field label="Email" hint={invite && !invite.accepted && !invite.expired ? "The invited address" : undefined}>
                 <input
                   type="email"
                   className="draft-input w-full"
@@ -226,10 +294,27 @@ export default function Auth() {
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   autoComplete="email"
+                  data-testid="auth-email"
                 />
               </Field>
 
-              <Field label="Password" hint={mode === "register" ? "At least six characters" : undefined}>
+              <Field
+                label="Password"
+                hint={
+                  mode === "register" ? (
+                    "At least eight characters"
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => switchTo("forgot")}
+                      className="focus-ink text-[0.75rem] text-ink-muted underline decoration-rule underline-offset-2 transition-colors hover:text-vermilion"
+                      data-testid="forgot-link"
+                    >
+                      Forgot password?
+                    </button>
+                  )
+                }
+              >
                 <input
                   type="password"
                   className="draft-input w-full font-mono"
@@ -237,8 +322,9 @@ export default function Auth() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  minLength={6}
+                  minLength={mode === "register" ? 8 : 6}
                   autoComplete={mode === "login" ? "current-password" : "new-password"}
+                  data-testid="auth-password"
                 />
               </Field>
 
@@ -266,9 +352,19 @@ export default function Auth() {
               )}
 
               {error && <ErrorNote>{error}</ErrorNote>}
+              {error && (
+                <button
+                  type="button"
+                  onClick={enter}
+                  className="focus-ink font-numeric text-[11px] uppercase tracking-[0.18em] text-ink-muted hover:text-ink"
+                >
+                  Continue to PTD &rarr;
+                </button>
+              )}
+              {joined && !error && <p className="eyebrow text-[10px] text-vermilion">Joined {joined} — taking you in…</p>}
 
               <Submit busy={busy} disabled={!email || !password}>
-                {mode === "login" ? "Sign in" : "Create the organization"}
+                {mode === "login" ? "Sign in" : invite && !invite.accepted && !invite.expired ? "Create the account" : "Create the organization"}
               </Submit>
 
               <ModeSwitcher mode={mode} setMode={switchTo} />
@@ -284,42 +380,6 @@ export default function Auth() {
         </footer>
       </div>
     </div>
-  );
-}
-
-function Submit({
-  busy,
-  disabled,
-  children,
-}: {
-  busy: boolean;
-  disabled?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="submit"
-      disabled={busy || disabled}
-      className={cn(
-        "focus-ink group flex w-full items-center justify-center gap-2 border border-ink bg-ink px-5 py-3",
-        "font-numeric text-[11px] uppercase tracking-[0.18em] text-parchment transition-all duration-150",
-        "hover:-translate-x-px hover:-translate-y-px hover:bg-parchment hover:text-ink hover:shadow-stamp",
-        "disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-x-0 disabled:hover:translate-y-0",
-        "disabled:hover:bg-ink disabled:hover:text-parchment disabled:hover:shadow-none"
-      )}
-    >
-      {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-      {children}
-      <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-    </button>
-  );
-}
-
-function ErrorNote({ children }: { children: React.ReactNode }) {
-  return (
-    <p role="alert" className="border border-vermilion/50 bg-vermilion/5 px-3 py-2 text-[0.9rem] text-vermilion">
-      {children}
-    </p>
   );
 }
 
@@ -339,6 +399,7 @@ function ModeSwitcher({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => voi
             type="button"
             onClick={() => setMode(o.key)}
             className="focus-ink py-1 text-[0.9rem] text-ink-muted transition-colors hover:text-ink"
+            data-testid={`mode-${o.key}`}
           >
             {o.label}
           </button>
@@ -426,65 +487,5 @@ function AgentResultPanel({ result, onClose }: { result: AgentSignupResult; onCl
         <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
       </button>
     </div>
-  );
-}
-
-function Section({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="border-t border-rule pt-3">
-      <div className="eyebrow mb-2">{label}</div>
-      <div className="space-y-1.5">{children}</div>
-    </div>
-  );
-}
-
-function KV({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3 text-[0.8rem]">
-      <span className="eyebrow text-[10px]">{k}</span>
-      <span className={cn("truncate text-right text-ink", mono && "font-numeric")}>{v}</span>
-    </div>
-  );
-}
-
-function CopyRow({
-  value,
-  onCopy,
-  copied,
-  mono,
-  subtle,
-}: {
-  value: string;
-  onCopy: () => void;
-  copied: boolean;
-  mono?: boolean;
-  subtle?: boolean;
-}) {
-  return (
-    <div className={cn("flex items-center gap-2 border px-2.5 py-1.5", subtle ? "border-rule bg-card" : "border-ink bg-parchment-deep/50")}>
-      <code className={cn("flex-1 truncate text-[11px]", mono && "font-mono", subtle ? "text-ink-muted" : "text-ink")} title={value}>
-        {value}
-      </code>
-      <button
-        type="button"
-        onClick={onCopy}
-        className="focus-ink inline-flex shrink-0 items-center gap-1 border border-rule px-2 py-1 font-numeric text-[10px] uppercase tracking-[0.12em] transition-colors hover:border-ink hover:text-ink"
-      >
-        {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-        {copied ? "copied" : "copy"}
-      </button>
-    </div>
-  );
-}
-
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 flex items-baseline justify-between gap-2">
-        <span className="eyebrow">{label}</span>
-        {hint && <span className="text-[0.75rem] text-ink-muted">{hint}</span>}
-      </span>
-      {children}
-    </label>
   );
 }

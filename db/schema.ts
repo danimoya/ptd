@@ -296,3 +296,22 @@ export const oauthRefreshTokens = pgTable("oauth_refresh_tokens", {
 export type OauthClient = typeof oauthClients.$inferSelect;
 export type OauthCode = typeof oauthCodes.$inferSelect;
 export type OauthRefreshToken = typeof oauthRefreshTokens.$inferSelect;
+
+/* ─────────────────────────── Password resets ───────────────────────────
+ * A reset link is a bearer credential for an account, so the row stores only a
+ * keyed SHA-256 of the token (deterministic, so the row is findable by value —
+ * the same treatment `oauth_refresh_tokens` gets) and the token itself exists
+ * only in the letter that was mailed. One use: `used_at` is stamped on
+ * redemption, and redeeming one invalidates every other outstanding token for
+ * that account, so a forwarded older link cannot be replayed afterwards.
+ */
+export const passwordResets = pgTable("password_resets", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  tokenHash: varchar("token_hash", { length: 200 }).notNull().unique(),
+  expiresAt: timestamp("expires_at").notNull(),
+  usedAt: timestamp("used_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type PasswordReset = typeof passwordResets.$inferSelect;

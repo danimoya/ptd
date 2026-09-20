@@ -6,6 +6,7 @@ import BacklogTab from "@/features/overview/BacklogTab";
 import AppsTab from "@/features/overview/AppsTab";
 import SystemicTab from "@/features/overview/SystemicTab";
 import AgentsTab from "@/features/overview/AgentsTab";
+import HybridTab from "@/features/overview/HybridTab";
 import { fetchStats } from "@/features/overview/api";
 
 const TABS = [
@@ -13,6 +14,7 @@ const TABS = [
   { to: "/overview/apps", label: "Apps", num: "ii" },
   { to: "/overview/systemic", label: "Systemic", num: "iii" },
   { to: "/overview/agents", label: "Agents", num: "iv" },
+  { to: "/overview/hybrid", label: "Hybrid", num: "v" },
 ] as const;
 
 /**
@@ -72,6 +74,7 @@ export default function Overview() {
         <Route path="apps" element={<AppsTab />} />
         <Route path="systemic" element={<SystemicTab />} />
         <Route path="agents" element={<AgentsTab />} />
+        <Route path="hybrid" element={<HybridTab />} />
         <Route path="*" element={<Navigate to="/overview" replace />} />
       </Routes>
     </section>

@@ -9,4 +9,6 @@ import "./billing";
 import "./slack";
 import "./reports";
 import "./ai";
+import "./hybrid";
+import "./org";
 export * from "./registry";
