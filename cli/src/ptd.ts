@@ -11,11 +11,12 @@ import type { Client } from "./api.ts";
 import { colorEnabled, dim, red, setColor, yellow } from "./color.ts";
 import { DEFAULT_BASE_URL, readConfig, stripTrailingSlash } from "./config.ts";
 import type { Ctx, Handler } from "./context.ts";
-import { ApiError, CliError, exitCodeFor, UsageError } from "./errors.ts";
+import { ApiError, ChildFailed, CliError, exitCodeFor, UsageError } from "./errors.ts";
 import { commandHelp, mainHelp, VERSION } from "./help.ts";
 import { actions, run } from "./commands/registry.ts";
 import { login, logout, orgs, use, whoami } from "./commands/session.ts";
 import { done, log, next, start, stats, stop, tasks, today } from "./commands/work.ts";
+import { agentRun, ciReport } from "./commands/agent.ts";
 
 const HANDLERS: Record<string, Handler> = {
   login,
@@ -33,6 +34,8 @@ const HANDLERS: Record<string, Handler> = {
   today,
   done,
   stats,
+  "agent-run": agentRun,
+  "ci-report": ciReport,
 };
 
 /** Commands that work before `ptd login` has ever run. */
@@ -92,6 +95,11 @@ export async function main(argv: string[]): Promise<number> {
 }
 
 function report(err: unknown, command: string): void {
+  if (err instanceof ChildFailed) {
+    // Not a PTD failure: the wrapped command failed and its code is carried out.
+    console.error(dim(err.message));
+    return;
+  }
   if (err instanceof UsageError) {
     console.error(red(err.message));
     console.error("");

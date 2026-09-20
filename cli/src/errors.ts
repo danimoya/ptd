@@ -46,7 +46,24 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * A wrapped command (`ptd agent-run -- …`) exited non-zero. PTD did its half —
+ * the entry was stopped and attested — so this is not a PTD error; the CLI just
+ * has to carry the child's exit code out, or `ptd agent-run` could not stand in
+ * for the command it wraps in a Makefile or a CI step.
+ */
+export class ChildFailed extends Error {
+  constructor(
+    readonly code: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ChildFailed";
+  }
+}
+
 export function exitCodeFor(err: unknown): number {
+  if (err instanceof ChildFailed) return err.code;
   if (err instanceof UsageError) return EXIT_USAGE;
   if (err instanceof ApiError) return err.status === 403 || err.code === "forbidden" ? EXIT_FORBIDDEN : EXIT_ERROR;
   return EXIT_ERROR;

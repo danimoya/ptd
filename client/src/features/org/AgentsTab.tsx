@@ -9,6 +9,8 @@ import Explainer from "./Explainer";
 import { Hint } from "./Hint";
 import { buildSnippets, TOKEN_PLACEHOLDER } from "./snippets";
 import { probeMcp, type McpProbeResult } from "./api";
+import HookPack from "./usage/HookPack";
+import ProviderCard from "./usage/ProviderCard";
 
 /**
  * Agent onboarding. Everything on this tab is a real, runnable artefact: the
@@ -85,7 +87,13 @@ export default function AgentsTab() {
             <li>
               Time logged by an agent is stamped <code>entry_source = "agent"</code> by the server, not by the agent, and may
               carry token counts and USD cost. Monthly per-stream budgets (<code>streams.agent_budget_usd</code>) are what the
-              budget alerts measure against.
+              budget alerts measure against — and in <code>enforce</code> mode what <code>next_task</code> refuses work over.
+            </li>
+            <li>
+              Those token counts are self-reported, so PTD keeps a second set of columns for what somebody else measured:{" "}
+              <code>time_entry.attest</code> writes <code>verifiedTokens</code> / <code>verifiedCostUsd</code> /{" "}
+              <code>verifiedSource</code>. The hook pack and the CI reporters below fill them in; the “Verified usage” section
+              reconciles the lot against the provider's own billing.
             </li>
           </>
         }
@@ -201,6 +209,22 @@ export default function AgentsTab() {
           ))}
         </div>
       </section>
+
+      {/* ---------- verified usage ---------- */}
+      <div className="rule-t pt-5">
+        <div className="eyebrow text-[9px]">Verified usage</div>
+        <h3 className="font-display text-xl tracking-tight mt-0.5">
+          Not the agent&apos;s <span className="italic">word</span>
+        </h3>
+        <p className="text-sm font-serif text-ink-muted mt-1 max-w-prose">
+          An agent reports its own tokens and its own dollars. These two mechanisms let something else say the same number: a
+          hook that read the session transcript, a build that wrapped the run, or the provider&apos;s own invoice for the month.
+        </p>
+      </div>
+
+      <ProviderCard />
+
+      <HookPack origin={origin} token={token} />
     </div>
   );
 }

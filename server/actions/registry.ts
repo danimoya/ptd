@@ -24,6 +24,14 @@ export interface ActionDef<S extends z.ZodObject<z.ZodRawShape> = z.ZodObject<z.
   requiredRole: Role;
   /** Surfaces the action belongs to; purely descriptive for docs/manifests. */
   surface: "overview" | "plan" | "track" | "org";
+  /**
+   * Write an `audit_events` row when this action succeeds. Set it on anything
+   * that changes who can do what, mints or destroys a credential, connects the
+   * organization to a third party, moves money, or takes data out. The flag lives
+   * on the definition rather than in the handler so that one grep answers "what
+   * is audited", and so no adapter can invoke an audited action unaudited.
+   */
+  audited?: boolean;
   handler: (args: z.infer<S>, ctx: ActionContext) => Promise<unknown>;
 }
 
@@ -53,6 +61,19 @@ export function getAction(name: string): ActionDef | undefined {
   return registry.get(name);
 }
 
+/**
+ * Called after an `audited` action succeeds. Set once, by `./audit`, which owns
+ * the audit tables; the registry stays free of a database import so the modules
+ * that only need the action shapes (docs, manifests, unit tests) do not drag one in.
+ */
+export type ActionAuditHook = (event: { def: ActionDef; args: unknown; result: unknown; ctx: ActionContext }) => void;
+
+let auditHook: ActionAuditHook | null = null;
+
+export function setActionAuditHook(hook: ActionAuditHook | null): void {
+  auditHook = hook;
+}
+
 export async function runAction(name: string, rawArgs: unknown, ctx: ActionContext): Promise<unknown> {
   const def = registry.get(name);
   if (!def) throw new ActionError("not_found", `Unknown action: ${name}`);
@@ -61,5 +82,16 @@ export async function runAction(name: string, rawArgs: unknown, ctx: ActionConte
   }
   const parsed = def.input.safeParse(rawArgs ?? {});
   if (!parsed.success) throw new ActionError("invalid", parsed.error.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; "));
-  return def.handler(parsed.data, ctx);
+  const result = await def.handler(parsed.data, ctx);
+  // After the handler, never around it: a refused or failed action has changed
+  // nothing, and the log records what happened rather than what was attempted.
+  // Whatever the hook does, it cannot fail the action it describes.
+  if (def.audited && auditHook) {
+    try {
+      auditHook({ def, args: parsed.data, result, ctx });
+    } catch (err) {
+      console.error(`[audit] hook threw for ${name}:`, err instanceof Error ? err.message : err);
+    }
+  }
+  return result;
 }

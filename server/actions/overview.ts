@@ -8,6 +8,8 @@ import { nextTask, queryTasks, taskQueryInput } from "../overview/query";
 import { appStats, getApp, listApps, systemicStreams } from "../overview/apps";
 import { orgStats } from "../overview/stats";
 import { createWebhook, deleteWebhook, listWebhooks, testWebhook } from "../overview/integrations";
+import { blockedStreamIds, streamBudgets } from "../usage/budget";
+import { nextTaskExcludingStreams } from "../usage/nextTask";
 
 /* ------------------------------------------------------------------ member+ */
 
@@ -43,7 +45,9 @@ defineAction({
   title: "Next task",
   description:
     "The single highest-priority task still worth starting (status backlog or triaged), plus `why` — the urgency/impact/effort arithmetic behind its score. " +
-    "By default it only offers work nobody has claimed or work already assigned to you, which makes it safe to poll in an autonomous loop.",
+    "By default it only offers work nobody has claimed or work already assigned to you, which makes it safe to poll in an autonomous loop. " +
+    "When the caller is an **agent** credential, streams whose `budgetMode` is `enforce` and whose month-to-date agent spend has reached their `agentBudgetUsd` are skipped, " +
+    "and the skipped lanes come back in `skippedStreams` so the agent can say why it went elsewhere. A human caller is never budget-limited.",
   input: z.object({
     streamId: z.union([z.number().int().positive(), z.literal("none"), z.null()]).optional()
       .describe('Restrict to one stream, or null / "none" for work filed against no stream.'),
@@ -54,7 +58,22 @@ defineAction({
   }),
   requiredRole: "member",
   surface: "overview",
-  handler: async (args, ctx) => nextTask(args, ctx.orgId, ctx.userId),
+  handler: async (args, ctx) => {
+    // Enforcement is an agent-only rule, and the extra read only happens for an
+    // agent credential: a human polling next_task pays nothing for a feature that
+    // could never apply to them.
+    if (ctx.authType !== "agent") return nextTask(args, ctx.orgId, ctx.userId);
+    const blocked = await blockedStreamIds(ctx.orgId);
+    if (blocked.length === 0) return nextTask(args, ctx.orgId, ctx.userId);
+    const result = await nextTaskExcludingStreams(args, ctx.orgId, ctx.userId, blocked);
+    const budgets = await streamBudgets(ctx.orgId);
+    return {
+      ...result,
+      skippedStreams: budgets
+        .filter((b) => blocked.includes(b.streamId))
+        .map((b) => ({ streamId: b.streamId, name: b.name, budgetUsd: b.budgetUsd, spentUsd: b.spentUsd, mode: b.mode })),
+    };
+  },
 });
 
 defineAction({

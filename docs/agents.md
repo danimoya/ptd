@@ -167,6 +167,231 @@ Where the numbers surface: `task.totals` (per task, split by source),
 `stream.totals` (per stream, with `overBudget` when a stream's agent budget is
 passed), `today_summary`, and the `stats` roll-up.
 
+All of that is still the agent's own arithmetic. **Verified usage**, below, is how
+something else gets to say the same number.
+
+## Verified usage
+
+The figures above are the agent's own word. The launch objection writes itself — *why
+would an agent report its own cost honestly?* — so PTD keeps a second set of columns for
+what something **other than the agent** measured, and never overwrites the first:
+
+| Column | Written by | Means |
+|---|---|---|
+| `tokens_used`, `api_cost_usd` | `time_entry.stop` / `log_past` | what the seat said it spent |
+| `verified_tokens`, `verified_cost_usd` | `time_entry.attest` | what a hook, a build or the provider measured |
+| `verified_source` | `time_entry.attest` | `claude_code_hook`, `ci` or `provider` |
+| `verified_at` | `time_entry.attest` | when the attestation was written |
+
+Both survive, so the claim and the evidence can be compared forever.
+
+### `time_entry.attest`
+
+```jsonc
+{
+  "entryId": 42,
+  "tokens": 143793,
+  "source": "claude_code_hook",
+  "evidence": {
+    "model": "claude-opus-5",
+    "inputTokens": 363, "outputTokens": 2430,
+    "cacheReadTokens": 138000, "cacheCreationTokens": 3000,
+    "turns": 14,
+    "transcriptSha256": "9b736ae2a2393bf1…"
+  }
+}
+```
+
+- **Members attest their own entries; manager and above anyone's** — the same gate
+  `time_entry.update` uses.
+- **Only agent-sourced, already-closed entries.** Verified usage on a human session would
+  mean nothing, and an open session has no final figure.
+- **`costUsd` is optional.** Omit it and, when `evidence` names a `model`, PTD prices the
+  tokens from its own table — cache reads at 0.1× and 5-minute cache writes at 1.25× the
+  input rate (1-hour writes at 2×, via `evidence.cacheTtl`). With neither a cost nor a
+  priceable model the tokens are verified and the cost is left **unset**, never stored as
+  a zero that would read as "this session was free".
+- **Re-attesting replaces the previous figure** — a hook that fires twice is harmless —
+  while the task history keeps every attestation as a `time_logged` event reading
+  `usage attested (claude_code_hook): 143793 tok · $0.15 · reported 100000 tok (+43793)`.
+- `usage.price` is the same table exposed read-only, so a hook can report a cost on
+  `stop` that matches the one the server will derive on `attest`.
+
+### Reading it back — `usage.summary` (manager)
+
+```jsonc
+{
+  "totals": {
+    "entries": 19, "verifiedEntries": 7, "coveragePct": 36.8,
+    "reported":   { "tokens": 1893000, "costUsd": 13.82 },
+    "verified":   { "tokens": 2040700, "costUsd": 1.21  },
+    "delta":      { "tokens": 147700,  "costUsd": -0.26 },
+    "unverified": { "tokens": 958300,  "costUsd": 12.87 }
+  },
+  "byAgent":  [ /* the same shape per seat   */ ],
+  "byStream": [ /* the same shape per stream */ ],
+  "discrepancies": [ /* every session whose gap exceeds tolerance, with a direction */ ],
+  "narrative": "7 of 19 agent sessions carry independent usage evidence (36.8% coverage)…"
+}
+```
+
+`delta` is `verified − reported`, so a **positive** number means the seat under-reported.
+Tolerance before a session is named is 5% of the verified figure or 1,000 tokens,
+whichever is larger. Overview → Agents draws this as a coverage bar per seat, with a
+`verified` glyph on each stream row.
+
+### The Claude Code hook pack
+
+`hooks/claude-code/` in the repository: two POSIX `sh` scripts (plus their shared
+plumbing) that need only `curl` and either `python3` or `node`.
+
+```sh
+mkdir -p ~/.claude/ptd && cd ~/.claude/ptd
+BASE=https://raw.githubusercontent.com/danimoya/ptd/main/hooks/claude-code
+curl -fsSLO $BASE/ptd-hook-common.sh
+curl -fsSLO $BASE/ptd-session-start.sh
+curl -fsSLO $BASE/ptd-session-stop.sh
+chmod +x ptd-session-*.sh
+```
+
+```json
+{
+  "env": { "PTD_URL": "https://ptd.example", "PTD_TOKEN": "ptd_…" },
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "startup|resume",
+        "hooks": [{ "type": "command", "command": "$HOME/.claude/ptd/ptd-session-start.sh", "timeout": 30 }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "$HOME/.claude/ptd/ptd-session-stop.sh", "timeout": 30 }] }
+    ]
+  }
+}
+```
+
+`SessionStart` opens an entry on `$PTD_TASK`, else a `.ptd-task` file at or above the
+working directory, else `next_task {assignee:"me"}`. `Stop` sums every assistant turn's
+`usage` block in the transcript at `transcript_path` (de-duplicated by `message.id`),
+stops the entry with that figure, then attests it with the transcript's SHA-256, the turn
+count and the model. Both are idempotent and both always exit 0 — a tracker that can fail
+a coding session is a tracker people turn off. Full reference:
+[`hooks/claude-code/README.md`](../hooks/claude-code/README.md).
+
+### Any other agent — `ptd agent-run`
+
+```sh
+ptd agent-run --task SEC-3 -- python fix_forms.py
+```
+
+Opens an entry, runs the command, closes the entry with whatever the command reported, and
+attests it. The command's exit code becomes the CLI's, so it can stand in for the command
+it wraps in a Makefile or a CI step. The wrapped program reports usage either way round:
+
+```sh
+# 1. a JSON file at $PTD_TOKENS_FILE — set for the child automatically
+echo '{"usage":{"input_tokens":363,"output_tokens":2430,"cache_read_input_tokens":138000},"model":"claude-opus-5"}' > "$PTD_TOKENS_FILE"
+
+# 2. or a marker on stdout (the last one wins)
+echo 'PTD_USAGE {"tokens":143793,"model":"claude-opus-5"}'
+```
+
+Both accept camelCase or snake_case, unwrap a nested `usage` object, and derive the total
+from the split when no total is given. The child also gets `$PTD_ENTRY_ID` and
+`$PTD_TASK_ID`. With nothing reported the entry is still stopped — the time was real — but
+nothing is attested.
+
+### CI — `ptd ci-report` and the GitHub Action
+
+```sh
+ptd ci-report --task SEC-3 --tokens 143793 --model claude-opus-5 --minutes 4
+ptd ci-report --entry 42 --usage-file usage.json     # attest an entry an earlier step opened
+cat build.log | ptd ci-report --entry 42             # or read a PTD_USAGE marker from a log
+```
+
+`GITHUB_REPOSITORY`, `GITHUB_WORKFLOW`, `GITHUB_JOB`, `GITHUB_RUN_ID`, `GITHUB_RUN_ATTEMPT`,
+`GITHUB_SHA`, `GITHUB_REF_NAME` and `GITHUB_ACTOR` become the attestation's evidence, with
+a link to the run, so any figure can be traced back to the job that produced it.
+
+The composite action wraps the same command:
+
+```yaml
+- uses: danimoya/ptd/.github/actions/ptd-report@main
+  with:
+    url: https://ptd.example
+    token: ${{ secrets.PTD_TOKEN }}
+    task: SEC-3
+    usage-file: usage.json     # or: tokens / cost / model
+    minutes: 4
+```
+
+It outputs `entry-id`, `verified-tokens` and `attested`. The token must belong to an
+**agent seat**: PTD drops tokens and cost on a human session, and `ci-report` says so
+rather than silently logging an unattestable entry.
+
+### Reconciling against the provider (admin)
+
+The strongest evidence is the organization's own invoice, because an agent never holds the
+credential that reads it.
+
+```jsonc
+// usage.connect_provider — admin only, sealed with PTD_SECRET_KEY, never returned
+{ "provider": "anthropic", "adminApiKey": "sk-ant-admin01-…" }
+
+// usage.reconcile — admin only
+{ "provider": "anthropic", "from": "2026-08-01", "to": "2026-08-31" }
+```
+
+PTD reads Anthropic's `/v1/organizations/usage_report/messages` and `/v1/organizations/cost_report`
+(or OpenAI's `/v1/organization/usage/completions` and `/v1/organization/costs`), sums the
+period, compares it with what the agents booked into the ledger, and stores one
+`usage_reconciliations` row:
+
+| Status | Means |
+|---|---|
+| `match` | inside tolerance — 5% of the provider's figure or 10,000 tokens, whichever is larger |
+| `under_reported` | the provider billed for more tokens than the ledger accounts for |
+| `over_reported` | the ledger claims more than the provider billed |
+| `unavailable` | the provider could not be read; the error is in `detail.providerError` |
+
+The two totals are **not commensurable to the token** — a provider bill includes keys PTD
+never sees, and PTD's ledger may include agents on a provider this reconciliation did not
+query — so a verdict is a signal to go and look, and `detail` carries the gap, the
+tolerance, the attestation coverage, the per-model breakdown and the per-agent split to
+look with. `usage.reconciliations` (manager) is the history; Org → Agents draws it.
+
+Set `PTD_USAGE_ANTHROPIC_BASE_URL` / `PTD_USAGE_OPENAI_BASE_URL` to point the fetcher at a
+proxy or a stub (a per-organization `baseUrl` on the connect call does the same thing).
+
+### Hard budgets
+
+`streams.agent_budget_usd` has always been a number a bar was drawn against.
+`streams.budget_mode` makes it load-bearing:
+
+```jsonc
+// stream.set_budget — manager
+{ "streamId": 4, "agentBudgetUsd": 40, "budgetMode": "enforce" }
+```
+
+| Mode | Effect |
+|---|---|
+| `alert` (default) | over-budget is reported — the bar turns red, the digest says so |
+| `enforce` | once month-to-date agent spend reaches the ceiling, `next_task` stops offering that stream's cards to **agent** credentials, a `budget.exhausted` webhook fires (once per stream per day) and `budget.check` answers `blocked: true` |
+
+Humans are never blocked. Spend counts the **verified** cost of a session where one exists
+and the self-reported cost otherwise, so under-reporting cannot buy extra runway.
+
+```jsonc
+// budget.check {streamId} — member
+{ "streamId": 4, "name": "API v2", "mode": "enforce", "budgetUsd": 40,
+  "spentUsd": 3.58, "remainingUsd": 36.42, "burnPct": 9,
+  "overBudget": false, "enforced": true, "blocked": false,
+  "periodStart": "2026-09-01T00:00:00.000Z" }
+```
+
+Omit `streamId` for every live lane plus a `blocked` list — the check an autonomous worker
+should make before it starts, so it can pick a different lane rather than discover the
+refusal as an empty queue.
+
 ## The `next_task` loop
 
 The pattern an autonomous worker should use:
@@ -199,6 +424,10 @@ Why this is safe to run unattended:
   same key returns the same card. Use it when work arrives from somewhere else.
 - Every mutation lands in `task.history` with `via: "mcp"` (or `"api"`), so what the
   agent did is reviewable afterwards.
+- A stream whose `budgetMode` is `enforce` and whose month is spent is skipped for agent
+  credentials, and the lanes that were skipped come back in `skippedStreams` — so the loop
+  can say why it went elsewhere instead of looking like it ran out of work. `budget.check`
+  answers the same question before you start.
 
 A `member` cannot assign a card to itself. Either give the seat `manager`, or have a
 human assign work and poll with `assignee: "me"`.

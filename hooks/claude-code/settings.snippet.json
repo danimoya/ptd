@@ -1,0 +1,32 @@
+{
+  "//": "PTD verified agent usage — merge this into ~/.claude/settings.json (or .claude/settings.json in one repo). Replace /path/to/ptd with wherever you put the hook pack, and set PTD_URL/PTD_TOKEN below or run `ptd login` first.",
+  "env": {
+    "PTD_URL": "https://ptd.example",
+    "PTD_TOKEN": "ptd_replace_with_this_agent_seat_token"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/path/to/ptd/hooks/claude-code/ptd-session-start.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/path/to/ptd/hooks/claude-code/ptd-session-stop.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,136 @@
+name: PTD verified usage report
+description: >-
+  Log a CI job's model usage into PTD and attest it, so the token and dollar
+  figures on the ledger were measured by the build rather than claimed by the
+  agent. Wraps `ptd ci-report`; records the repository, workflow, job, run id,
+  attempt, commit and actor as the attestation's evidence.
+author: PTD
+
+branding:
+  icon: check-circle
+  color: orange
+
+inputs:
+  url:
+    description: Base URL of the PTD deployment, e.g. https://ptd.example
+    required: true
+  token:
+    description: >-
+      An agent seat's `ptd_…` bearer token (Org → Agents → register an agent).
+      Store it as a repository secret and pass it here. A human credential will
+      not work: PTD records tokens and cost only for agent-sourced entries.
+    required: true
+  org-id:
+    description: Organization id, when the token belongs to more than one.
+    required: false
+    default: ""
+  task:
+    description: >-
+      Card to book the work against — a task id or an externalKey (SEC-3). When
+      omitted, $PTD_TASK, a .ptd-task file in the checkout, then
+      next_task {assignee:"me"} are tried in that order.
+    required: false
+    default: ""
+  entry:
+    description: >-
+      Attest an existing time entry instead of logging a new one. Use this when
+      an earlier step already opened and closed the entry.
+    required: false
+    default: ""
+  tokens:
+    description: Total tokens the job consumed. Omit if usage-file is set.
+    required: false
+    default: ""
+  cost:
+    description: >-
+      USD cost, if the job knows it. Left out, PTD prices the tokens from its own
+      table using `model`.
+    required: false
+    default: ""
+  model:
+    description: Model id, e.g. claude-opus-5. Needed for PTD to price the tokens.
+    required: false
+    default: ""
+  minutes:
+    description: Length of the session to log, in minutes (ignored with `entry`).
+    required: false
+    default: "1"
+  usage-file:
+    description: >-
+      Path to a JSON usage report — {"tokens":N,"model":"…"}, or an SDK `usage`
+      block. Takes precedence over the tokens/cost inputs being empty.
+    required: false
+    default: ""
+  notes:
+    description: Note for the ledger line. Defaults to the workflow and run id.
+    required: false
+    default: ""
+  cli-version:
+    description: npm version of the `ptd-cli` package to install.
+    required: false
+    default: latest
+  cli-path:
+    description: >-
+      Path to an already-built CLI entry point (e.g. cli/dist/ptd.js) to run with
+      node instead of installing from npm. Used by this repository's own
+      workflows; leave empty elsewhere.
+    required: false
+    default: ""
+
+outputs:
+  entry-id:
+    description: The time entry that was logged or attested.
+    value: ${{ steps.report.outputs.entry-id }}
+  verified-tokens:
+    description: Tokens recorded as verified, or empty when nothing was attested.
+    value: ${{ steps.report.outputs.verified-tokens }}
+  attested:
+    description: "true when an attestation was written, false otherwise."
+    value: ${{ steps.report.outputs.attested }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve the PTD CLI
+      id: cli
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ -n "${{ inputs.cli-path }}" ]; then
+          echo "cmd=node ${{ inputs.cli-path }}" >> "$GITHUB_OUTPUT"
+        else
+          npm install -g "ptd-cli@${{ inputs.cli-version }}" >/dev/null 2>&1
+          echo "cmd=ptd" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Report usage to PTD
+      id: report
+      shell: bash
+      env:
+        PTD_URL: ${{ inputs.url }}
+        PTD_TOKEN: ${{ inputs.token }}
+        PTD_ORG_ID: ${{ inputs.org-id }}
+        PTD_TASK: ${{ inputs.task }}
+      run: |
+        set -euo pipefail
+        args=(ci-report --json)
+        [ -n "${{ inputs.entry }}" ]      && args+=(--entry "${{ inputs.entry }}")
+        [ -n "${{ inputs.tokens }}" ]     && args+=(--tokens "${{ inputs.tokens }}")
+        [ -n "${{ inputs.cost }}" ]       && args+=(--cost "${{ inputs.cost }}")
+        [ -n "${{ inputs.model }}" ]      && args+=(--model "${{ inputs.model }}")
+        [ -n "${{ inputs.usage-file }}" ] && args+=(--usage-file "${{ inputs.usage-file }}")
+        [ -n "${{ inputs.notes }}" ]      && args+=(--notes "${{ inputs.notes }}")
+        [ -z "${{ inputs.entry }}" ]      && args+=(--minutes "${{ inputs.minutes }}")
+        # `ptd ci-report` reads a PTD_USAGE marker from stdin when no figure is
+        # given, so stdin is closed here to keep it from waiting on the runner's.
+        ${{ steps.cli.outputs.cmd }} "${args[@]}" < /dev/null | tee ptd-report.json
+
+        node -e '
+          const fs = require("fs");
+          let d = {};
+          try { d = JSON.parse(fs.readFileSync("ptd-report.json", "utf8")); } catch {}
+          const entry = d?.logged?.entry?.id ?? d?.entry?.entryId ?? "";
+          const verified = d?.attested?.verified?.tokens ?? d?.verified?.tokens ?? "";
+          const out = [`entry-id=${entry}`, `verified-tokens=${verified}`, `attested=${verified === "" ? "false" : "true"}`];
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, out.join("\n") + "\n");
+        '
