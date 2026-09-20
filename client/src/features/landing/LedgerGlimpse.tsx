@@ -132,6 +132,12 @@ export default function LedgerGlimpse({ className }: { className?: string }) {
       const secs = (Date.now() - startedAt.current) / 1000;
       if (secs >= MAX_SECONDS) {
         window.clearInterval(tick);
+        // Deliberately MAX_SECONDS, not `secs`: the timer fires on a 100ms
+        // interval, so the measured value overshoots eight by a little and by
+        // a different little each time. Passing it through would bill the row
+        // 15,457 tokens instead of 15,400 and put a different figure on the
+        // page every visit. The auto-stop happens *at* eight seconds, so eight
+        // is what the line records. Do not "fix" this to `land(source, secs)`.
         land(source, MAX_SECONDS);
       } else {
         setElapsed(secs);
