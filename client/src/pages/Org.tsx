@@ -10,6 +10,7 @@ import ImportTab from "@/features/org/ImportTab";
 import SecurityTab from "@/features/org/SecurityTab";
 import AuditTab from "@/features/org/AuditTab";
 import DataTab from "@/features/org/DataTab";
+import TelemetryFirstRunBanner from "@/features/org/telemetry/FirstRunBanner";
 import { useMe } from "@/hooks/use-me";
 
 const NUMERALS = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi", "xii"] as const;
@@ -56,6 +57,11 @@ export default function Org() {
           Who may <span className="italic">write</span> here
         </h2>
       </div>
+
+      {/* Asked once, for the owner of an installation that has never answered:
+          opt-in telemetry exists and here is where to read what it sends.
+          Dismissing it, or setting either toggle, records the decision for good. */}
+      <TelemetryFirstRunBanner />
 
       <nav className="rule-b">
         <ul className="flex gap-1 -mx-1 overflow-x-auto nice-scroll">

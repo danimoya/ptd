@@ -23,6 +23,7 @@ import { registerGithubRoutes } from "./integrations/github/routes";
 import { registerTelegramRoutes } from "./integrations/telegram/routes";
 import { registerTeamsRoutes } from "./integrations/teams/routes";
 import { registerContactRoutes } from "./contact";
+import { registerTelemetryRoutes } from "./telemetry/routes";
 import { registerObservability } from "./metrics/health";
 import "./actions";
 
@@ -56,5 +57,6 @@ export function registerRoutes(app: Express) {
   registerTelegramRoutes(app);
   registerTeamsRoutes(app);
   registerContactRoutes(app);
+  registerTelemetryRoutes(app);
   return httpServer;
 }

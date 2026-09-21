@@ -20,4 +20,5 @@ import "./usage";
 import "./account";
 import "./audit";
 import "./orgadmin";
+import "./telemetry";
 export * from "./registry";

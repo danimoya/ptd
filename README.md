@@ -44,6 +44,10 @@ Hosted version: <https://ptd.danimoya.com> — flat $15/month per organization.
   `PTD_SECRET_KEY`. Passwords are bcrypt (cost 12); agent tokens are stored as scrypt hashes.
 - **Browser ↔ app**: terminate TLS at your reverse proxy (the hosted instance runs behind
   nginx with HSTS).
+- **Telemetry**: off by default, opt-in from Org → Data. When enabled it posts exactly
+  `{installation_id, dashboard_version, heliosdb_version, timestamp}` once a week — no IP, no username, no
+  hostname, no names, no counts, nothing from your tasks — and the page shows that JSON before anything is
+  sent ([what is sent, and how to opt out](docs/self-hosting.md#telemetry)).
 
 ## Give your agent a seat
 

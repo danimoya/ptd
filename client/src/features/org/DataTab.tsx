@@ -8,6 +8,7 @@ import { useMe } from "@/hooks/use-me";
 import { signOut } from "@/lib/auth";
 import Explainer from "./Explainer";
 import { Hint } from "./Hint";
+import TelemetrySection from "./telemetry/TelemetrySection";
 import { deleteOrg, requestExport, type ExportGrant } from "./data/api";
 
 /**
@@ -86,6 +87,12 @@ export default function DataTab() {
               Both are audited. The deletion's row has no organization (the column is a foreign key to the row being deleted), so
               it names what was deleted in its target instead.
             </li>
+            <li>
+              Installation telemetry is the other direction — data leaving, on purpose, and only if an owner says so. It is{" "}
+              <strong>off by default</strong>, instance-wide rather than per organization, and sends exactly four fields:{" "}
+              <code>installation_id</code>, <code>dashboard_version</code>, <code>heliosdb_version</code>, <code>timestamp</code>. The
+              section below shows the precise JSON before anything is sent.
+            </li>
           </>
         }
       />
@@ -133,6 +140,10 @@ export default function DataTab() {
           </p>
         )}
       </section>
+
+      {/* Instance-wide, owner-only, and opt-in: a non-owner is not shown a switch
+          they cannot throw, and the API refuses them regardless. */}
+      {isOwner ? <TelemetrySection /> : null}
 
       <section className={cn("paper p-4", isOwner && "border-vermilion/40")} data-testid="data-delete">
         <div className="flex items-start justify-between gap-3">
