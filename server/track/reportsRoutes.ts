@@ -14,9 +14,20 @@
  *  - **`GET /api/verify/:token`** — the point of certification. It is public and
  *    unauthenticated by design: the people who need to check an invoice are the
  *    client's accountant and the contractor's bank, and neither has an account
- *    here. It is rate-limited, answers only what a verifier needs (dates,
- *    durations, what the work was booked against) and never a note or an email
- *    address, and the token is 32 random bytes so the endpoint cannot be walked.
+ *    here. It is rate-limited, and the token is 32 random bytes so the endpoint
+ *    cannot be walked. What it answers is now deliberately anonymous — a
+ *    reference, a kind, an issue date, whether it was withdrawn, and the three
+ *    integrity checks. A verification link travels: it is printed on a document
+ *    that gets forwarded, filed and attached to other mail, so it must prove a
+ *    document is genuine without saying whose it is or what it is worth.
+ *
+ *  - **`POST /api/verify/:token/request-code`**, **`/redeem`** and
+ *    **`GET /api/verify/:token/details`** — how the particulars are released. A
+ *    named recipient (or the issuing organization's own managers, or the
+ *    contractor being paid) asks for a six-digit code, it is emailed to that
+ *    address, and redeeming it returns the full account plus a thirty-minute
+ *    access token bound to this one invoice. Asking is never an oracle: every
+ *    outcome answers the same sentence.
  *
  *  - **`GET /.well-known/ptd-signing-key.json`** — the public half of every key
  *    this deployment has ever signed with, so a verifier can check a signature
@@ -26,6 +37,8 @@
  */
 
 import type { Express, Request, Response } from "express";
+import rateLimit from "express-rate-limit";
+import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 import { db } from "../../db";
 import { invoices, organizations } from "../../db/schema";
@@ -39,7 +52,15 @@ import { buildContractorInvoice, contractorDataFromSnapshot } from "../invoices/
 import { certificationOf } from "../invoices/issue";
 import { billingProfile } from "../invoices/entries";
 import { publishedKeys } from "../invoices/keys";
-import { verifyByToken } from "../invoices/verify";
+import { publicVerifyByToken, verifyByToken } from "../invoices/verify";
+import {
+  ACCESS_TTL_SECONDS,
+  MAX_CODE_ATTEMPTS,
+  NEUTRAL_REQUEST_MESSAGE,
+  redeemAccessCode,
+  requestAccessCode,
+  verifyAccessToken,
+} from "../invoices/access";
 import type { InvoiceSnapshot } from "../invoices/snapshot";
 
 /** Safe for a Content-Disposition filename on every client. */
@@ -49,6 +70,37 @@ const slug = (value: string): string =>
     .replace(/[^a-z0-9]+/gi, "-")
     .replace(/^-+|-+$/g, "")
     .toLowerCase() || "invoice";
+
+/* ── The access-code ceilings ────────────────────────────────────────── */
+
+/**
+ * Per token *and* per address, not per address alone.
+ *
+ * One ceiling on the IP would let a client's whole office share a budget of five
+ * codes; one ceiling on the token would let anyone who has the link lock its
+ * recipients out by asking five times. Keyed on both, a nuisance can only spend
+ * the budget they are sitting in.
+ */
+const perTokenAndIp = (name: string, max: number, message: string) =>
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req: Request) => `${name}:${req.ip ?? "unknown"}:${String(req.params.token ?? "")}`,
+    message: { error: "rate_limited", message },
+  });
+
+const requestCodeLimiter = perTokenAndIp(
+  "verify-request",
+  5,
+  "Too many access codes have been requested for this invoice from here. Try again in a quarter of an hour."
+);
+
+const redeemLimiter = perTokenAndIp("verify-redeem", 15, "Too many attempts. Try again in a quarter of an hour.");
+
+const emailIn = z.object({ email: z.string().trim().min(3).max(200).email() });
+const redeemIn = emailIn.extend({ code: z.string().trim().min(4).max(12) });
 
 export function registerReportsRoutes(app: Express) {
   app.get("/api/track/invoices/:id.pdf", auth, resolveOrg, async (req: Request, res: Response) => {
@@ -143,15 +195,93 @@ export function registerReportsRoutes(app: Express) {
   /**
    * Public verification. No auth, no organization header, no way to enumerate:
    * a wrong token gets the same answer as a token that never existed.
+   *
+   * Anonymous by construction — it cannot name the organization or the amount
+   * because `publicVerifyByToken` never carries them off the server.
    */
   app.get("/api/verify/:token", heavyLimiter, async (req: Request, res: Response) => {
     try {
-      const result = await verifyByToken(String(req.params.token ?? ""));
+      const result = await publicVerifyByToken(String(req.params.token ?? ""));
       res.setHeader("Cache-Control", "no-store");
       res.status(result.invoice ? 200 : 404).json(result);
     } catch (err) {
       console.error("[invoice verify]", err);
       res.status(500).json({ valid: false, reason: "Verification could not be completed." });
+    }
+  });
+
+  /**
+   * Ask for a code. Always 200, always the same sentence — an address nobody
+   * named, an address on the allowlist and a token that never existed are
+   * indistinguishable from out here.
+   */
+  app.post("/api/verify/:token/request-code", requestCodeLimiter, async (req: Request, res: Response) => {
+    const parsed = emailIn.safeParse(req.body ?? {});
+    res.setHeader("Cache-Control", "no-store");
+    if (!parsed.success) {
+      return res.status(400).json({ error: "invalid", message: "That does not look like an email address." });
+    }
+    try {
+      const outcome = await requestAccessCode({ token: String(req.params.token ?? ""), email: parsed.data.email, ip: req.ip ?? null });
+      res.status(200).json(outcome);
+    } catch (err) {
+      console.error("[invoice access request]", err);
+      // Even a failure answers the neutral sentence: a 500 here would tell a
+      // stranger which addresses are worth trying.
+      res.status(200).json({ message: NEUTRAL_REQUEST_MESSAGE });
+    }
+  });
+
+  /**
+   * Redeem it. On success the full account comes back with the access token, so
+   * the page does not have to make a second round trip to show anything.
+   */
+  app.post("/api/verify/:token/redeem", redeemLimiter, async (req: Request, res: Response) => {
+    const parsed = redeemIn.safeParse(req.body ?? {});
+    res.setHeader("Cache-Control", "no-store");
+    if (!parsed.success) {
+      return res.status(400).json({ error: "invalid", message: "Give the address the code was sent to, and the code." });
+    }
+    const token = String(req.params.token ?? "");
+    try {
+      const outcome = await redeemAccessCode({ token, email: parsed.data.email, code: parsed.data.code, ip: req.ip ?? null });
+      if (!outcome.ok) {
+        return res.status(401).json({
+          error: outcome.failure === "locked" ? "code_locked" : "invalid_code",
+          message:
+            outcome.failure === "locked"
+              ? `That code has been refused ${MAX_CODE_ATTEMPTS} times and is now dead. Request a new one.`
+              : "That code is not valid, or it has expired. Request a new one.",
+        });
+      }
+      const full = await verifyByToken(token);
+      res.status(200).json({ access: { token: outcome.accessToken, expiresAt: outcome.expiresAt, ttlSeconds: ACCESS_TTL_SECONDS }, ...full });
+    } catch (err) {
+      console.error("[invoice access redeem]", err);
+      res.status(500).json({ error: "internal", message: "The code could not be checked." });
+    }
+  });
+
+  /**
+   * The details again, for a page that already holds an access token — a reload,
+   * or a tab restored from session storage. The token names the one invoice it
+   * was minted for, so it cannot be carried to another.
+   */
+  app.get("/api/verify/:token/details", heavyLimiter, async (req: Request, res: Response) => {
+    const token = String(req.params.token ?? "");
+    res.setHeader("Cache-Control", "no-store");
+    // Header only. An access token in a query string ends up in access logs, in
+    // `Referer` on every link the page carries, and in a pasted URL.
+    const claim = verifyAccessToken(req.header("Authorization") ?? "", token);
+    if (!claim) {
+      return res.status(401).json({ error: "access_required", message: "Ask for an access code to see this invoice's details." });
+    }
+    try {
+      const full = await verifyByToken(token);
+      res.status(full.invoice ? 200 : 404).json(full);
+    } catch (err) {
+      console.error("[invoice access details]", err);
+      res.status(500).json({ error: "internal", message: "Verification could not be completed." });
     }
   });
 

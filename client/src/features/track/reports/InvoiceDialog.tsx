@@ -28,6 +28,7 @@ import {
   reportKeys,
   type GeneratedInvoice,
 } from "./api";
+import ShareDialog from "./ShareInvoiceDialog";
 import { Empty, Failed, Loading } from "./bits";
 import { MONTH_NAMES, invoiceYears } from "./ranges";
 
@@ -261,6 +262,9 @@ export function InvoiceLedger() {
   const { toast } = useToast();
   const q = useQuery({ queryKey: reportKeys.invoices, queryFn: listInvoices });
   const rows = q.data ?? [];
+  // Which invoice's recipient list is open. The link itself discloses nothing;
+  // naming who may read the particulars is what this dialog is for.
+  const [sharing, setSharing] = useState<{ id: number; reference: string; verifyUrl: string } | null>(null);
 
   if (q.isLoading) return <Loading>Reading the invoice book…</Loading>;
   if (q.isError) return <Failed>The invoice book could not be read.</Failed>;
@@ -288,13 +292,24 @@ export function InvoiceLedger() {
               target="_blank"
               rel="noopener noreferrer"
               className="h-8 px-2 rounded-sm inline-flex items-center gap-1.5 text-ink-muted hover:text-vermilion focus-ink shrink-0"
-              title="Open the public verification page — this link can be handed to the customer"
+              title="Open the verification page. The link proves the invoice is genuine to anyone; its details need a code emailed to a named recipient."
               data-testid={`invoice-verify-${r.id}`}
             >
               <ShieldCheck className="h-3.5 w-3.5" />
               <span className="eyebrow text-[9px] !text-current">verify</span>
               <ExternalLink className="h-2.5 w-2.5" />
             </a>
+          ) : null}
+          {r.verifyUrl ? (
+            <Button
+              variant="ghost"
+              className="h-8 rounded-sm font-display text-sm shrink-0"
+              onClick={() => setSharing({ id: r.id, reference: r.reference ?? `invoice ${r.id}`, verifyUrl: r.verifyUrl as string })}
+              title="Name the people who may read this invoice's details"
+              data-testid={`invoice-share-${r.id}`}
+            >
+              Share
+            </Button>
           ) : null}
           <Button
             variant="ghost"
@@ -307,6 +322,9 @@ export function InvoiceLedger() {
           </Button>
         </li>
       ))}
+      {sharing ? (
+        <ShareDialog invoiceId={sharing.id} reference={sharing.reference} verifyUrl={sharing.verifyUrl} onClose={() => setSharing(null)} />
+      ) : null}
     </ul>
   );
 }

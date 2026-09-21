@@ -37,6 +37,8 @@ import { monthLabel, monthWindow } from "../track/invoice";
 import { billingProfile, billingProfiles } from "../invoices/entries";
 import { buildContractorInvoice, contractorReference, contractorSnapshot } from "../invoices/contractor";
 import { certify, verifyUrlFor, voidInvoice } from "../invoices/issue";
+import { invoiceForSharing, recipientHash, recipientsOf, shareInvoice, unshareInvoice, MAX_RECIPIENTS } from "../invoices/access";
+import { audit } from "../audit/log";
 import { assertCertifiedInvoices } from "../billing/gate";
 import { meterIssuedInvoice } from "../billing/metering";
 import { parseWhen } from "../track/entries";
@@ -442,6 +444,9 @@ defineAction({
       totalMinutes: draft.totals.minutes,
       amountCents: draft.totals.amountCents,
       issuedAt,
+      // So the contractor is allowlisted for their own document without anyone
+      // having to share it with them.
+      memberUserId: args.userId,
     });
 
     // One `ptd_certified_invoices` meter event on Team, keyed on the reference so a
@@ -458,6 +463,9 @@ defineAction({
       pdfUrl: issued.pdfUrl,
       contentHash: issued.contentHash,
       signingKeyId: issued.signingKeyId,
+      // The link proves the document; its details need a code emailed to a named
+      // recipient, and the contractor is already one of them.
+      recipientCount: issued.recipientCount,
       status: "issued",
       contractor: draft.contractor,
       period: draft.period,
@@ -538,6 +546,136 @@ defineAction({
   surface: "track",
   audited: true,
   handler: async (args, ctx) => voidInvoice(ctx, args.invoiceId, args.reason),
+});
+
+/* ══════════════════════════════════════════════════════════════════════
+   Who may read an invoice — the recipient allowlist
+   ══════════════════════════════════════════════════════════════════════
+
+   The verification link proves a document is genuine to anyone who opens it and
+   says nothing else: no organization, no party, no period, no money, no lines.
+   The particulars are released to a **named recipient** who types back a
+   six-digit code emailed to their own address. These three actions maintain that
+   list.
+
+   Two things about them are deliberate and easy to misread as omissions.
+
+   1. **They are not marked `audited`.** The registry's audit hook records an
+      action's arguments verbatim, and the arguments here are email addresses.
+      Writing them into `audit_events` would put back, in the clear, exactly what
+      the allowlist takes the trouble to store as a salted hash. Each handler
+      audits itself instead, with the hash.
+   2. **An address can never be read back.** `invoice.recipients` answers masks.
+      There is no "resend to the third one down", because the address that letter
+      went to was never kept — resending means typing it again, which
+      `invoice.share` treats as a re-send rather than a duplicate.
+*/
+
+const emailsIn = z
+  .array(z.string().trim().email("that is not an email address").max(200))
+  .min(1)
+  .max(20)
+  .describe("The addresses to name as recipients. Each is sent the link and told a code will be emailed to that address on request.");
+
+/**
+ * Who may change an invoice's allowlist: a manager, or the contractor the invoice
+ * is about. A contractor sending their own certified invoice to their own client
+ * is the ordinary case, and needing a manager for it would make the feature
+ * useless to the person the document is about.
+ */
+async function invoiceForRecipients(ctx: ActionContext, invoiceId: number, what: string) {
+  const row = await invoiceForSharing(ctx.orgId, invoiceId);
+  if (!row) {
+    throw new ActionError("not_found", `Invoice ${invoiceId} is not in this organization, or has not been certified — there is no link to share.`);
+  }
+  const own = row.kind === "contractor" && row.memberUserId === ctx.userId;
+  if (!manager(ctx) && !own) throw new ActionError("forbidden", `${what} requires manager or above, or being the contractor the invoice is about`);
+  return row;
+}
+
+defineAction({
+  name: "invoice.share",
+  title: "Share a certified invoice",
+  description:
+    "Name the people who may read an invoice, and write to them. Each address is added to the invoice's recipient allowlist and sent the verification link with a note that a six-digit code will be emailed to that address when they ask for the details on the page. The link itself proves the document is genuine and shows nothing else, so forwarding it discloses nothing. Addresses are stored only as a salted hash and a mask — sharing the same address again re-sends the letter rather than adding it twice, and there is no way to read an address back out. Manager and above, or the contractor the invoice is about.",
+  input: z.object({
+    invoiceId: idIn("The certified invoice to share."),
+    emails: emailsIn,
+    message: z.string().max(1000).describe("A line of your own to include in the letter.").optional(),
+  }),
+  requiredRole: "member",
+  surface: "track",
+  handler: async (args, ctx) => {
+    const row = await invoiceForRecipients(ctx, args.invoiceId, "Sharing an invoice");
+    const outcome = await shareInvoice({
+      row,
+      emails: args.emails,
+      message: args.message,
+      sharedBy: ctx.displayName,
+      sharedByUserId: ctx.userId,
+      orgName: await orgName(ctx.orgId),
+    });
+    audit(ctx, "invoice.shared", row.reference ?? `invoiceId:${row.id}`, {
+      invoiceId: row.id,
+      recipients: args.emails.map((e) => recipientHash(row.verifyToken, e)),
+      added: outcome.shared.filter((s) => s.added).length,
+      mailed: outcome.shared.filter((s) => s.mailed).length,
+    });
+    return {
+      invoiceId: row.id,
+      reference: row.reference,
+      verifyUrl: verifyUrlFor(row.verifyToken),
+      shared: outcome.shared,
+      recipients: outcome.recipients,
+      maxRecipients: MAX_RECIPIENTS,
+      // A self-hoster with no SMTP gets the link back and sends it themselves;
+      // the recipient is on the allowlist either way.
+      mailed: outcome.shared.filter((s) => s.mailed).length,
+    };
+  },
+});
+
+defineAction({
+  name: "invoice.recipients",
+  title: "Who may read an invoice",
+  description:
+    "The invoice's recipient allowlist, masked: one row per named address with when it was added, whether PTD added it at issue (the contractor, a customer's billing address) or somebody shared it, how many access codes it has asked for and how many opened the details. Addresses are stored as a salted hash, so what comes back is `a••••a@example.com` and never the address. Manager and above, or the contractor the invoice is about.",
+  input: z.object({ invoiceId: idIn("The certified invoice.") }),
+  requiredRole: "member",
+  surface: "track",
+  handler: async (args, ctx) => {
+    const row = await invoiceForRecipients(ctx, args.invoiceId, "Reading an invoice's recipients");
+    return {
+      invoiceId: row.id,
+      reference: row.reference,
+      verifyUrl: verifyUrlFor(row.verifyToken),
+      recipients: recipientsOf(row),
+      maxRecipients: MAX_RECIPIENTS,
+    };
+  },
+});
+
+defineAction({
+  name: "invoice.unshare",
+  title: "Withdraw access to an invoice",
+  description:
+    "Take an address off an invoice's allowlist. Any code already sent to it is destroyed with it, so access that a letter in an inbox could still open is actually revoked. Because addresses are stored hashed, the address has to be typed in full; answers whether it was on the list. Manager and above, or the contractor the invoice is about.",
+  input: z.object({
+    invoiceId: idIn("The certified invoice."),
+    email: z.string().trim().email().max(200).describe("The address to remove, in full."),
+  }),
+  requiredRole: "member",
+  surface: "track",
+  handler: async (args, ctx) => {
+    const row = await invoiceForRecipients(ctx, args.invoiceId, "Withdrawing access to an invoice");
+    const outcome = await unshareInvoice({ row, email: args.email });
+    audit(ctx, "invoice.unshared", row.reference ?? `invoiceId:${row.id}`, {
+      invoiceId: row.id,
+      recipient: recipientHash(row.verifyToken, args.email),
+      removed: outcome.removed,
+    });
+    return { invoiceId: row.id, reference: row.reference, removed: outcome.removed, mask: outcome.mask, recipients: outcome.recipients };
+  },
 });
 
 /* ══════════════════════════════════════════════════════════════════════

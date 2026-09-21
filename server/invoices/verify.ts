@@ -21,6 +21,17 @@
  * The response is deliberately thin. A verifier needs to know the invoice is real
  * and the hours are the hours; it has no business reading the notes a contractor
  * wrote on a session, or anyone's email address. Dates and durations only.
+ *
+ * There are **two** answers in here, and which one a caller gets is the whole
+ * point of the scheme:
+ *
+ *  - `publicVerifyByToken` — what the bare link shows anybody. A reference, a
+ *    kind, the issue date, whether it was withdrawn, and the three checks. No
+ *    organization, no contractor or customer, no period, no rate, no total, no
+ *    lines. A forwarded link proves a document is genuine and says nothing about
+ *    whose it is or what it is worth.
+ *  - `verifyByToken` — the full account, released only behind an access token
+ *    earned with a code emailed to a named recipient (server/invoices/access.ts).
  */
 
 import { format } from "date-fns";
@@ -69,6 +80,36 @@ export interface VerifyResult {
     entriesChecked: number;
   };
   lines?: VerifyLine[];
+}
+
+/* ── The anonymous answer ────────────────────────────────────────────── */
+
+/** Exactly the four checks, and not the digest they were taken over. */
+export interface PublicIntegrity {
+  contentHashMatches: boolean;
+  signatureValid: boolean;
+  entriesUnchanged: boolean;
+  keyId: number | null;
+}
+
+/**
+ * What the bare link returns. Every field here is either about this deployment or
+ * about the document's own identity; nothing in it belongs to the organization,
+ * the contractor or the customer.
+ */
+export interface PublicVerifyResult {
+  valid: boolean;
+  reason?: string;
+  reasons?: string[];
+  invoice?: {
+    reference: string;
+    kind: string;
+    issuedAt: string;
+    voided: boolean;
+  };
+  integrity?: PublicIntegrity;
+  /** True when the details can be opened with a code. Constant for a known invoice. */
+  detailsAvailable?: boolean;
 }
 
 const NOT_FOUND: VerifyResult = {
@@ -185,4 +226,49 @@ export async function verifyByToken(token: string): Promise<VerifyResult> {
       entrySource: l.entrySource,
     })),
   };
+}
+
+/* ── Projecting it down ──────────────────────────────────────────────── */
+
+/**
+ * The anonymous view of a full result.
+ *
+ * Written as a projection rather than a second query on purpose: there is one
+ * verification routine, so the two answers can never disagree about whether an
+ * invoice is sound. What changes is how much of the answer is said out loud.
+ *
+ * The reasons survive the cut. They count — "1 time entry has been altered" — and
+ * a count is not the organization's business to hide: a verifier who is told
+ * "not verified" and nothing else has been told nothing. None of them names a
+ * person, a customer, a task or an amount.
+ */
+export function publicViewOf(full: VerifyResult): PublicVerifyResult {
+  if (!full.invoice) return { valid: full.valid, ...(full.reason ? { reason: full.reason } : {}) };
+  return {
+    valid: full.valid,
+    ...(full.reason ? { reason: full.reason } : {}),
+    ...(full.reasons ? { reasons: full.reasons } : {}),
+    invoice: {
+      reference: full.invoice.reference,
+      kind: full.invoice.kind,
+      issuedAt: full.invoice.issuedAt,
+      voided: full.invoice.voided,
+    },
+    ...(full.integrity
+      ? {
+          integrity: {
+            contentHashMatches: full.integrity.contentHashMatches,
+            signatureValid: full.integrity.signatureValid,
+            entriesUnchanged: full.integrity.entriesUnchanged,
+            keyId: full.integrity.keyId,
+          },
+        }
+      : {}),
+    detailsAvailable: true,
+  };
+}
+
+/** What `GET /api/verify/:token` answers: the proof, without the particulars. */
+export async function publicVerifyByToken(token: string): Promise<PublicVerifyResult> {
+  return publicViewOf(await verifyByToken(token));
 }

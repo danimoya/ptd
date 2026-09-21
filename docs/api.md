@@ -163,14 +163,14 @@ JSON object.
 
 <!-- BEGIN GENERATED ACTIONS -->
 
-_155 actions, generated from the registry by `scripts/gen-docs.ts` (`npm run docs`). Do not edit this block by hand._
+_161 actions, generated from the registry by `scripts/gen-docs.ts` (`npm run docs`). Do not edit this block by hand._
 
 | surface | actions | minimum role of each |
 |---|---|---|
 | overview | 18 | 7 × `member`, 10 × `manager`, 1 × `admin` |
 | plan | 37 | 15 × `member`, 22 × `manager` |
-| track | 37 | 25 × `member`, 11 × `manager`, 1 × `admin` |
-| org | 63 | 20 × `member`, 5 × `manager`, 32 × `admin`, 6 × `owner` |
+| track | 40 | 28 × `member`, 11 × `manager`, 1 × `admin` |
+| org | 66 | 20 × `member`, 5 × `manager`, 32 × `admin`, 9 × `owner` |
 
 ### Overview — backlog, apps, KPIs, webhooks
 
@@ -826,7 +826,7 @@ Open cards whose due date — or computed end (startDate + duration) — falls w
 
 ### Track — the timer, the ledger, reports, invoices
 
-`customer.create` · `customer.delete` · `customer.goals` · `customer.list` · `customer.update` · `insights.patterns` · `insights.summary` · `invoice.contractor_generate` · `invoice.contractor_list` · `invoice.contractor_preview` · `invoice.generate` · `invoice.list` · `invoice.preview` · `invoice.void` · `report.compare` · `report.range` · `report.search` · `stream.totals` · `task.totals` · `template.create` · `template.delete` · `template.list` · `time_entry.approve` · `time_entry.attest` · `time_entry.current` · `time_entry.delete` · `time_entry.list` · `time_entry.log_past` · `time_entry.pending` · `time_entry.reject` · `time_entry.start` · `time_entry.stop` · `time_entry.submit` · `time_entry.switch_break` · `time_entry.update` · `today_summary` · `usage.price`
+`customer.create` · `customer.delete` · `customer.goals` · `customer.list` · `customer.update` · `insights.patterns` · `insights.summary` · `invoice.contractor_generate` · `invoice.contractor_list` · `invoice.contractor_preview` · `invoice.generate` · `invoice.list` · `invoice.preview` · `invoice.recipients` · `invoice.share` · `invoice.unshare` · `invoice.void` · `report.compare` · `report.range` · `report.search` · `stream.totals` · `task.totals` · `template.create` · `template.delete` · `template.list` · `time_entry.approve` · `time_entry.attest` · `time_entry.current` · `time_entry.delete` · `time_entry.list` · `time_entry.log_past` · `time_entry.pending` · `time_entry.reject` · `time_entry.start` · `time_entry.stop` · `time_entry.submit` · `time_entry.switch_break` · `time_entry.update` · `today_summary` · `usage.price`
 
 #### `customer.create`
 
@@ -980,6 +980,39 @@ The line items a customer's month would bill: one line per stream × task with i
 | `customerId` | integer | required | The customer to bill. |
 | `month` | integer | required | Calendar month, 1–12. |
 | `year` | integer | required | Calendar year. |
+
+#### `invoice.recipients`
+
+**Who may read an invoice** · role `member` and above
+
+The invoice's recipient allowlist, masked: one row per named address with when it was added, whether PTD added it at issue (the contractor, a customer's billing address) or somebody shared it, how many access codes it has asked for and how many opened the details. Addresses are stored as a salted hash, so what comes back is `a••••a@example.com` and never the address. Manager and above, or the contractor the invoice is about.
+
+| field | type | | meaning |
+|---|---|---|---|
+| `invoiceId` | integer | required | The certified invoice. |
+
+#### `invoice.share`
+
+**Share a certified invoice** · role `member` and above
+
+Name the people who may read an invoice, and write to them. Each address is added to the invoice's recipient allowlist and sent the verification link with a note that a six-digit code will be emailed to that address when they ask for the details on the page. The link itself proves the document is genuine and shows nothing else, so forwarding it discloses nothing. Addresses are stored only as a salted hash and a mask — sharing the same address again re-sends the letter rather than adding it twice, and there is no way to read an address back out. Manager and above, or the contractor the invoice is about.
+
+| field | type | | meaning |
+|---|---|---|---|
+| `invoiceId` | integer | required | The certified invoice to share. |
+| `emails` | string[] | required | The addresses to name as recipients. Each is sent the link and told a code will be emailed to that address on request. |
+| `message` | string | optional | A line of your own to include in the letter. |
+
+#### `invoice.unshare`
+
+**Withdraw access to an invoice** · role `member` and above
+
+Take an address off an invoice's allowlist. Any code already sent to it is destroyed with it, so access that a letter in an inbox could still open is actually revoked. Because addresses are stored hashed, the address has to be typed in full; answers whether it was on the list. Manager and above, or the contractor the invoice is about.
+
+| field | type | | meaning |
+|---|---|---|---|
+| `invoiceId` | integer | required | The certified invoice. |
+| `email` | string | required | The address to remove, in full. |
 
 #### `invoice.void`
 
@@ -1286,7 +1319,7 @@ What PTD thinks a set of token counts costs, using the same table `time_entry.at
 
 ### Org — members, imports, calendar, integrations, billing
 
-`account.security` · `ai.connect` · `ai.disconnect` · `audit.export` · `audit.list` · `billing.change_plan` · `billing.checkout` · `billing.contractors` · `billing.portal` · `billing.status` · `billing.sync` · `github.disconnect` · `github.list_mappings` · `github.map_stream` · `github.status` · `github.sync_now` · `github.unmap_stream` · `ical.url` · `identity.list` · `identity.unlink` · `import.commit` · `import.history` · `import.preview` · `invitation.resend` · `member.billing` · `member.set_billing` · `oauth.clients` · `oauth.my_grants` · `oauth.revoke_client` · `oauth.revoke_grant` · `org.delete` · `org.export` · `org.members` · `org.security` · `org.set_security` · `slack.check_budgets` · `slack.disconnect` · `slack.link_code` · `slack.set_channel` · `slack.status` · `slack.test` · `slack.unlink` · `teams.connect` · `teams.disconnect` · `teams.link_code` · `teams.status` · `teams.unlink` · `telegram.disconnect` · `telegram.link_code` · `telegram.register_webhook` · `telegram.status` · `telegram.unlink` · `telegram.webhook_info` · `usage.connect_provider` · `usage.disconnect_provider` · `usage.providers` · `usage.reconcile` · `usage.reconciliations` · `webhook.create` · `webhook.delete` · `webhook.list` · `webhook.test` · `whoami`
+`account.security` · `ai.connect` · `ai.disconnect` · `audit.export` · `audit.list` · `billing.change_plan` · `billing.checkout` · `billing.contractors` · `billing.portal` · `billing.status` · `billing.sync` · `github.disconnect` · `github.list_mappings` · `github.map_stream` · `github.status` · `github.sync_now` · `github.unmap_stream` · `ical.url` · `identity.list` · `identity.unlink` · `import.commit` · `import.history` · `import.preview` · `invitation.resend` · `member.billing` · `member.set_billing` · `oauth.clients` · `oauth.my_grants` · `oauth.revoke_client` · `oauth.revoke_grant` · `org.delete` · `org.export` · `org.members` · `org.security` · `org.set_security` · `slack.check_budgets` · `slack.disconnect` · `slack.link_code` · `slack.set_channel` · `slack.status` · `slack.test` · `slack.unlink` · `teams.connect` · `teams.disconnect` · `teams.link_code` · `teams.status` · `teams.unlink` · `telegram.disconnect` · `telegram.link_code` · `telegram.register_webhook` · `telegram.status` · `telegram.unlink` · `telegram.webhook_info` · `telemetry.ping` · `telemetry.set` · `telemetry.status` · `usage.connect_provider` · `usage.disconnect_provider` · `usage.providers` · `usage.reconcile` · `usage.reconciliations` · `webhook.create` · `webhook.delete` · `webhook.list` · `webhook.test` · `whoami`
 
 #### `account.security`
 
@@ -1789,6 +1822,34 @@ Takes no arguments.
 **Telegram webhook info** · role `admin` and above
 
 What Telegram itself thinks the webhook is: the URL it delivers to, how many updates are queued, and the last delivery error it saw. The fastest way to tell a wrong PTD_BASE_URL from a firewall.
+
+Takes no arguments.
+
+#### `telemetry.ping`
+
+**Send one install ping now** · role `owner` and above
+
+Post the four-field payload once, immediately, instead of waiting for the weekly timer. Refused with `telemetry-disabled` while the toggle is off — there is no path in PTD that pings without an explicit opt-in. Returns the exact payload that was sent and the receiver's status code; a network failure is reported, not thrown.
+
+Takes no arguments.
+
+#### `telemetry.set`
+
+**Set the telemetry preferences** · role `owner` and above
+
+Turn the weekly install ping and the update check on or off, independently. The ping posts four fields to the shared receiver, which hashes (client IP, installation id) under a weekly-rotating salt and keeps only the hash; the update check is a bare GET against the public releases feed and sends nothing at all. Either call also records that the question has been answered, which retires the first-run prompt. `PTD_TELEMETRY=0` or `=1` in the environment outranks the stored ping toggle.
+
+| field | type | | meaning |
+|---|---|---|---|
+| `telemetryEnabled` | boolean | optional | true = post the weekly ping. Off by default. |
+| `updateChecksEnabled` | boolean | optional | true = GET the public releases feed. Off by default. Sends no payload. |
+| `dismissed` | boolean | optional | Answer the question without changing either toggle — what dismissing the first-run prompt does. |
+
+#### `telemetry.status`
+
+**Installation telemetry status** · role `owner` and above
+
+Whether this installation submits the weekly anonymous install ping and whether it checks for updates — both off unless someone turned them on — together with the exact four-field JSON that would be sent, the six ready-to-paste offline submission formats for an egress-restricted host, and the receiver's retention policy. Reading this sends nothing.
 
 Takes no arguments.
 

@@ -217,10 +217,13 @@ Issuing an invoice — of either kind — does four things in one step:
 | Action | Role | Effect |
 |---|---|---|
 | `invoice.contractor_preview` | member (own) / manager | What the month would bill, with the minutes being left out for want of approval |
-| `invoice.contractor_generate` | manager | Issues and certifies; returns `{invoiceId, reference, verifyUrl, pdfUrl, contentHash}` |
+| `invoice.contractor_generate` | manager | Issues and certifies; returns `{invoiceId, reference, verifyUrl, pdfUrl, contentHash, recipientCount}` |
 | `invoice.contractor_list` | member (own) / manager | Issued contractor invoices with their verification links |
 | `invoice.preview` / `invoice.generate` / `invoice.list` | manager | The same, for customers |
 | `invoice.void` | admin | Unlocks the entries and stamps `voided_at`; the reason goes to the audit trail |
+| `invoice.share` | manager, or the contractor the invoice is about | Names addresses as recipients and writes to them with the link |
+| `invoice.recipients` | manager / contractor (own) | The allowlist, masked — never an address |
+| `invoice.unshare` | manager / contractor (own) | Takes an address off the list and destroys any code already sent to it |
 
 References are `PTD-2026-09-0007` for customers and `PTD-CTR-2026-09-0007` for
 contractors. Because the reference is inside what gets signed, the row is inserted
@@ -253,9 +256,24 @@ Every invoice carries a URL built from 32 random bytes:
 (a dependency-free encoder lives in `server/invoices/qr.ts`: byte mode, ECC L/M,
 versions 1–10, drawn as vector rectangles so it stays crisp in print).
 
+**The link proves authenticity to anyone; the particulars are released to named
+recipients only.** A verification link is printed on a document that travels — it
+is forwarded, filed, and attached to other mail — so the bare link answers only
+what a holder needs to know that the document is real:
+
 ```
 GET /api/verify/:token        # public, unauthenticated, rate-limited
+{ "valid": true,
+  "invoice":   { "reference": "PTD-CTR-2026-09-0001", "kind": "contractor",
+                 "issuedAt": "2026-09-20T12:00:00.000Z", "voided": false },
+  "integrity": { "contentHashMatches": true, "signatureValid": true,
+                 "entriesUnchanged": true, "keyId": 1 },
+  "detailsAvailable": true }
 ```
+
+No organization, no contractor or customer, no period, no rate, no total, no line
+items — and not even the content hash, which is a fingerprint of the whole record.
+A failed check still reports *which* assurance broke, in counts rather than names.
 
 Three checks run and fail independently, so the answer says *which* assurance
 broke:
@@ -268,11 +286,63 @@ broke:
 
 A voided invoice reports all three passing and `valid: false`, with the reason.
 
-The response carries a date, a duration, the stream and task, and human-vs-agent —
-**never** a session note, an email address or an exact clock time. The public page
-at `/verify/:token` renders the same answer for a human: a large Verified / Not
-verified verdict, the reasons, the document's own terms, the three checks, the
-hours, a link to the public key and a copy of the raw JSON.
+The public page at `/verify/:token` renders that answer for a human: a large
+Verified / Not verified verdict, the sentence *"This is a genuine PTD certified
+invoice PTD-CTR-2026-09-0001, issued 20 September 2026. Integrity: verified."*, the
+three checks, a link to the public key, and a form to ask for the details.
+
+### Access codes
+
+The details — who issued the invoice, who it is for, the period, the rate, the
+total and the hours behind it — are released only to an address on the invoice's
+**recipient allowlist**, and only after a six-digit code emailed to that address.
+
+```
+POST /api/verify/:token/request-code   {email}           # 5 per token+IP per 15 min
+POST /api/verify/:token/redeem         {email, code}     # 15 per token+IP per 15 min
+GET  /api/verify/:token/details        Authorization: Bearer <access token>
+```
+
+- **Who may ask.** An address on the allowlist, one of the issuing organization's
+  owner/admins/managers, or the contractor the invoice is about. Anyone else gets
+  the same 200 and the same sentence — *"If that address is a named recipient of
+  this invoice, an access code is on its way"* — as a recipient does. So does an
+  address on a token that never existed. Nothing in the reply, its shape or its
+  status code distinguishes the three.
+- **The code.** Six digits, valid **10 minutes**, stored as
+  `sha256(code + ":" + verifyToken)` and never in the clear. Five wrong tries kill
+  it; asking again replaces the live one, so a code read out of an older letter
+  stops working. With **no SMTP configured** and outside production the code comes
+  back in the response, because there is nowhere else for it to go.
+- **What redeeming buys.** A purpose-scoped JWT (`purpose: "invoice.access"`),
+  good for **30 minutes**, carrying `sha256(verifyToken)` and the recipient's hash.
+  It opens that one invoice and nothing else, and `verifySessionJwt` refuses it as
+  a login because it has a purpose. The page keeps it in `sessionStorage` for the
+  tab.
+- **The recipient list.** `invoice.share {invoiceId, emails[], message?}` adds
+  addresses and writes to each with the link and a note that a code will be sent to
+  that address on request. **No address is stored**: a recipient is
+  `sha256(verifyToken + ":" + address)` plus a mask (`a••••a@northwind.example`),
+  so the same accountant on two invoices produces two unrelated hashes and the
+  column cannot be mined for a mailing list. The consequence is deliberate — PTD
+  cannot show an address back, and "resend" means typing it again, which
+  `invoice.share` treats as a re-send rather than a duplicate. Issuing an invoice
+  allowlists the contractor being paid and, on a customer invoice, the customer's
+  billing address when one is recorded.
+- **Where it lives.** In `invoices.snapshot.access` — the `invoices` table has no
+  column for it — and `contentHashOf` strips that key before hashing, so sharing an
+  invoice never moves the hash printed on a PDF already in the post. Every invoice
+  issued before this existed hashes byte-for-byte as it did.
+- **What is recorded.** `invoice.access_requested`, `invoice.access_granted`,
+  `invoice.access_denied`, `invoice.shared` and `invoice.unshared` land in the
+  organization's audit trail against the invoice's reference, with the recipient's
+  **hash** and never their address. `invoice.share` is deliberately *not* marked
+  `audited` in the registry: that flag records an action's arguments verbatim, and
+  the arguments here are email addresses.
+
+The detail response still carries a date, a duration, the stream and task, and
+human-vs-agent — **never** a session note, an email address or an exact clock
+time.
 
 ### Rates and money
 

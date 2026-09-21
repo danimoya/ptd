@@ -8,7 +8,11 @@
  *  2. The snapshot is canonically serialised, hashed, and the hash is **signed**
  *     with the deployment's Ed25519 key.
  *  3. A 32-byte **verify token** is minted; whoever holds the document can open
- *     `/verify/<token>` and check all of it without an account.
+ *     `/verify/<token>` and confirm it is genuine without an account. The details
+ *     behind it are released only to a named recipient after an emailed code, and
+ *     the parties to the document — the contractor being paid, a customer's
+ *     billing address — are put on that allowlist here, at issue, because they
+ *     should not have to be granted access to their own invoice.
  *  4. Every included entry is **locked** to the invoice, so the hours behind a
  *     document that is already in someone's hands cannot be edited or struck.
  *
@@ -23,6 +27,7 @@ import { db } from "../../db";
 import { invoices, timeEntries } from "../../db/schema";
 import { ActionError, type ActionContext } from "../actions/registry";
 import { DEFAULT_PUBLIC_URL } from "../billing/base";
+import { initialAccess } from "./access";
 import { activeSigningKey, signHash } from "./keys";
 import { contentHashOf, type InvoiceSnapshot } from "./snapshot";
 import type { Certification } from "./contractor";
@@ -47,6 +52,8 @@ export interface Issued {
   signingKeyId: number;
   issuedAt: Date;
   certification: Certification;
+  /** How many addresses were allowlisted automatically — never which ones. */
+  recipientCount: number;
 }
 
 /**
@@ -64,12 +71,20 @@ export async function certify(args: {
   totalMinutes: number;
   amountCents: number | null;
   issuedAt: Date;
+  /** The contractor being paid, when this is a contractor invoice. */
+  memberUserId?: number | null;
 }): Promise<Issued> {
   const key = await activeSigningKey();
+  // Over the snapshot as built — the access block added below is stripped by
+  // `contentHashOf`, so allowlisting a recipient never moves this hash.
   const contentHash = contentHashOf(args.snapshot);
   const signature = await signHash(contentHash, key.id);
   const verifyToken = randomBytes(32).toString("hex");
   const pdfUrl = invoicePdfPath(args.invoiceId);
+  // Recipient hashes are salted with the verification token, so this can only be
+  // built once the token exists.
+  const access = await initialAccess({ verifyToken, snapshot: args.snapshot, memberUserId: args.memberUserId ?? null });
+  const stored: InvoiceSnapshot = { ...args.snapshot, access };
 
   await db
     .update(invoices)
@@ -80,7 +95,7 @@ export async function certify(args: {
       totalMinutes: args.totalMinutes,
       amountCents: args.amountCents,
       totalAmount: args.amountCents ?? args.totalMinutes,
-      snapshot: args.snapshot as unknown as Record<string, unknown>,
+      snapshot: stored as unknown as Record<string, unknown>,
       contentHash,
       signature,
       signingKeyId: key.id,
@@ -111,6 +126,7 @@ export async function certify(args: {
     signature,
     signingKeyId: key.id,
     issuedAt: args.issuedAt,
+    recipientCount: access.recipients.length,
     certification: {
       reference: args.reference,
       contentHash,

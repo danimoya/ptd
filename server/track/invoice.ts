@@ -423,6 +423,11 @@ function drawQr(doc: Doc, text: string, x: number, y: number, box: number) {
  * frozen record behind it, which published key signed that hash, and where to
  * check all three. The hash is printed twice — a short group anyone can read out
  * loud, and the full digest for a machine.
+ *
+ * The prose says what the link does and does not show, because a document that
+ * travels needs to be honest about that: opening it proves the invoice is
+ * genuine, and the particulars come only after a code emailed to a named
+ * recipient (server/invoices/access.ts).
  */
 function certification(doc: Doc, cert: Certification, numeral: string, sessions: number) {
   ensureRoom(doc, 170);
@@ -441,7 +446,7 @@ function certification(doc: Doc, cert: Certification, numeral: string, sessions:
     .fontSize(8.5)
     .fillColor(INK_MUTED)
     .text(
-      `Plan Track Done recorded ${sessions} ${sessions === 1 ? "session" : "sessions"} as the work happened and froze them into a signed record when this invoice was issued. Anyone holding this document can confirm it is authentic and that the underlying entries have not been altered since.`,
+      `Plan Track Done recorded ${sessions} ${sessions === 1 ? "session" : "sessions"} as the work happened and froze them into a signed record when this invoice was issued. Anyone holding this document can confirm at the link below that it is authentic and that the underlying entries have not been altered since; the link shows no names, figures or line items. The details are released only to a named recipient, after a code emailed to their own address.`,
       LEFT,
       top,
       { width: textWidth }

@@ -8,7 +8,7 @@ vi.mock("../../db", async () => {
 import { generateKeyPairSync, sign as cryptoSign } from "crypto";
 import { db } from "../../db";
 import { contentHashOf, entrySha256, SNAPSHOT_VERSION, type HashableEntry, type InvoiceSnapshot } from "../../server/invoices/snapshot";
-import { looksLikeToken, verifyByToken } from "../../server/invoices/verify";
+import { looksLikeToken, publicVerifyByToken, publicViewOf, verifyByToken } from "../../server/invoices/verify";
 import type { FakeDb } from "./fake-db";
 
 const fake = db as unknown as FakeDb;
@@ -250,5 +250,72 @@ describe("a customer invoice", () => {
     const r = await verifyByToken(TOKEN);
     expect(r.invoice).toMatchObject({ kind: "customer", contractorOrCustomer: "Northwind Retail" });
     expect(r.valid).toBe(true);
+  });
+});
+
+describe("the anonymous answer the bare link gives", () => {
+  /**
+   * The point of these: a verification link is printed on a document that gets
+   * forwarded, filed and attached to other mail. It has to prove the document is
+   * genuine without telling whoever ends up with it who is billing whom for how
+   * much. So the assertions are about what is *absent*.
+   */
+  it("proves the invoice and names nothing else", async () => {
+    scenario();
+    const r = await publicVerifyByToken(TOKEN);
+    expect(r.valid).toBe(true);
+    expect(r.invoice).toEqual({
+      reference: "PTD-CTR-2026-09-0001",
+      kind: "contractor",
+      issuedAt: "2026-09-20T12:00:00.000Z",
+      voided: false,
+    });
+    expect(r.integrity).toEqual({ contentHashMatches: true, signatureValid: true, entriesUnchanged: true, keyId: 1 });
+    expect(r.detailsAvailable).toBe(true);
+    expect(r.lines).toBeUndefined();
+  });
+
+  it("carries no organization, no party, no period, no money and no hours", async () => {
+    scenario();
+    const body = JSON.stringify(await publicVerifyByToken(TOKEN));
+    for (const leak of ["Atelier 14", "Priya", "Indigo Studio", "FR90210445", "September 2026", "USD", "13333", "200", "MOB-1", "Onboarding"]) {
+      expect(body).not.toContain(leak);
+    }
+    // Not even the digest, which is a fingerprint of the whole record.
+    expect(body).not.toContain(contentHashOf(snapshot()));
+    expect(body).not.toContain("@");
+  });
+
+  it("still says which assurance broke, in counts rather than names", async () => {
+    scenario({ live: [liveEntry({ checkOut: new Date("2026-09-15T18:00:00.000Z") })] });
+    const r = await publicVerifyByToken(TOKEN);
+    expect(r.valid).toBe(false);
+    expect(r.integrity).toMatchObject({ entriesUnchanged: false, contentHashMatches: true, signatureValid: true });
+    expect(r.reason).toBe("1 time entry has been altered since this invoice was issued.");
+    // The altered row's id is a detail, and details are behind a code.
+    expect(JSON.stringify(r)).not.toContain("changedEntryIds");
+  });
+
+  it("says a withdrawn invoice is withdrawn without saying when", async () => {
+    scenario({ voidedAt: new Date("2026-09-21T09:00:00.000Z") });
+    const r = await publicVerifyByToken(TOKEN);
+    expect(r.invoice).toMatchObject({ voided: true });
+    expect(JSON.stringify(r)).not.toContain("2026-09-21");
+  });
+
+  it("answers an unknown token the same way the full check does", async () => {
+    fake.queue([]);
+    const r = await publicVerifyByToken("a".repeat(64));
+    expect(r.valid).toBe(false);
+    expect(r.invoice).toBeUndefined();
+    expect(r.integrity).toBeUndefined();
+    expect(r.reason).toMatch(/No invoice carries that verification token/);
+  });
+
+  it("is a projection of the one verification routine, not a second opinion", async () => {
+    scenario();
+    const full = await verifyByToken(TOKEN);
+    expect(publicViewOf(full).valid).toBe(full.valid);
+    expect(publicViewOf(full).integrity?.signatureValid).toBe(full.integrity?.signatureValid);
   });
 });

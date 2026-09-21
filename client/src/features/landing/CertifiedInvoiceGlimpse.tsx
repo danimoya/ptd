@@ -8,8 +8,15 @@ import { Form, QuietButton, SourceStamp } from "./chrome";
  *
  * The one instrument on this page that argues rather than demonstrates. An
  * external contractor's September, issued as an invoice whose lines were
- * frozen, hashed and signed at issue — and a verification slip of the kind
- * anyone holding the link sees, with no account and no login.
+ * frozen, hashed and signed at issue — and the verification slip anyone
+ * holding the link sees, with no account and no login.
+ *
+ * The slip is what the link proves, not what the link shows. The real page
+ * names the reference, the issue date and the three checks and stops there;
+ * the lines and the figures on the left are released only to an address the
+ * issuer named, after a six-digit code emailed to it. That is why the panel
+ * says "what the link proves" — a link printed on a document that gets
+ * forwarded has to be safe to forward.
  *
  * Press "Pad the hours" and one line grows by an hour, the way a padded
  * timesheet grows. Nothing on the invoice complains; the slip does, because
@@ -231,7 +238,7 @@ export default function CertifiedInvoiceGlimpse({ className }: { className?: str
           aria-live="polite"
         >
           <p className="font-numeric text-[10px] uppercase tracking-[0.14em] text-ink-muted">
-            What the link shows
+            What the link proves
           </p>
           <p
             data-testid="verify-headline"
@@ -261,9 +268,10 @@ export default function CertifiedInvoiceGlimpse({ className }: { className?: str
           <p className="font-numeric mt-4 break-all border-t border-rule pt-3 text-[10px] leading-relaxed text-ink-muted">
             {VERIFY_URL}
           </p>
-          <p className="mt-2 text-[0.85rem] leading-relaxed text-ink-muted text-pretty">
-            A private link. Whoever holds it can check the invoice — a client, an accountant, an auditor — with
-            no account and no login.
+          <p className="mt-2 text-[0.85rem] leading-relaxed text-ink-muted text-pretty" data-testid="verify-disclosure">
+            A private link. Whoever holds it can confirm the invoice is genuine — a client, an accountant, an
+            auditor — with no account and no login, and sees no names, no figures and no line items. The details
+            go only to the people the issuer named, each after a six-digit code emailed to their own address.
           </p>
         </aside>
       </div>

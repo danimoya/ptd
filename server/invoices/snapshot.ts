@@ -21,6 +21,13 @@
  *
  * Nothing private travels in a snapshot: no notes, no email addresses. A line is
  * a date, a duration, what it was booked against and who (or what) produced it.
+ *
+ * One block in here is **not** part of what was signed: `access`, the list of
+ * named recipients and the one-time codes that release the invoice's details. It
+ * lives in the same jsonb column because `invoices` has nowhere else to put it
+ * and the schema is frozen, and it is stripped before hashing (see `signedPart`)
+ * so sharing an invoice cannot move the hash printed on a PDF already in the
+ * post.
  */
 
 import { createHash } from "crypto";
@@ -84,7 +91,53 @@ export interface InvoiceSnapshot {
   totals: SnapshotTotals;
   issuedAt: string;
   reference: string;
+  /** Who may read the details, and the outstanding codes. Never signed — see `signedPart`. */
+  access?: InvoiceAccess;
 }
+
+/* ── Access: who the details are released to ─────────────────────────── */
+
+export const ACCESS_VERSION = 1 as const;
+
+/**
+ * One named recipient of an invoice.
+ *
+ * The address itself is never written. `hash` is sha-256 over the invoice's own
+ * verification token and the normalised address, so the same person on two
+ * invoices produces two unrelated hashes and this column cannot be mined for a
+ * mailing list. `mask` is what a manager reads back — enough to recognise an
+ * address they typed, not enough to be one.
+ */
+export interface AccessRecipient {
+  hash: string;
+  mask: string;
+  addedAt: string;
+  /** Who shared it; null when PTD allowlisted it automatically at issue. */
+  addedBy: number | null;
+  via: "issue" | "share";
+  /** How many codes this recipient has asked for, and how many opened the details. */
+  requests?: number;
+  grants?: number;
+}
+
+/** One outstanding code. The code itself exists only in the letter that carried it. */
+export interface AccessCode {
+  /** Whose request this answers — the recipient's `hash`. */
+  hash: string;
+  /** sha-256 of the code and the invoice's verification token. */
+  codeHash: string;
+  issuedAt: string;
+  expiresAt: string;
+  attempts: number;
+}
+
+export interface InvoiceAccess {
+  version: typeof ACCESS_VERSION;
+  recipients: AccessRecipient[];
+  codes: AccessCode[];
+}
+
+export const emptyAccess = (): InvoiceAccess => ({ version: ACCESS_VERSION, recipients: [], codes: [] });
 
 /* ── Canonical serialisation ─────────────────────────────────────────── */
 
@@ -117,8 +170,22 @@ export function canonicalJson(value: unknown): string {
 
 export const sha256Hex = (input: string): string => createHash("sha256").update(input, "utf8").digest("hex");
 
+/**
+ * What the content hash is taken over: the whole snapshot except its access block.
+ *
+ * Sharing an invoice, requesting a code and redeeming one all write into
+ * `access`, and none of them may move the hash — a copy of the PDF prints it, and
+ * a verifier re-derives it. `canonicalJson` drops `undefined` and this drops the
+ * key outright, so a snapshot that has never been shared hashes byte-for-byte as
+ * it did before the field existed: every invoice issued earlier goes on verifying.
+ */
+export function signedPart(snapshot: InvoiceSnapshot): Omit<InvoiceSnapshot, "access"> {
+  const { access: _unsigned, ...signed } = snapshot;
+  return signed;
+}
+
 /** The digest that gets signed. */
-export const contentHashOf = (snapshot: InvoiceSnapshot): string => sha256Hex(canonicalJson(snapshot));
+export const contentHashOf = (snapshot: InvoiceSnapshot): string => sha256Hex(canonicalJson(signedPart(snapshot)));
 
 /** First twelve hex digits, grouped — what a human reads off a printed page. */
 export const shortHash = (hash: string): string => `${hash.slice(0, 4)} ${hash.slice(4, 8)} ${hash.slice(8, 12)}`.toUpperCase();

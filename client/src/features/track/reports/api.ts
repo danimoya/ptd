@@ -390,6 +390,8 @@ export interface GeneratedContractorInvoice {
   pdfUrl: string;
   contentHash: string;
   signingKeyId: number;
+  /** Addresses allowlisted automatically at issue — the contractor being paid. */
+  recipientCount: number;
   status: string;
   contractor: ContractorPreview["contractor"];
   period: ContractorPreview["period"];
@@ -457,6 +459,45 @@ export const getContractors = (args: { month?: number; year?: number } = {}) =>
 export const voidInvoice = (args: { invoiceId: number; reason: string }) =>
   callAction<{ invoiceId: number; reference: string | null; voidedAt: string; unlockedEntries: number[]; reason: string }>("invoice.void", args as unknown as Record<string, unknown>);
 
+/* ── Who may read an invoice ──────────────────────────────────────────── */
+
+/**
+ * A recipient, as the server is willing to describe one: a mask, never an
+ * address. Addresses are stored as a per-invoice salted hash, so nothing can read
+ * one back — which is why "resend" here means typing the address again.
+ */
+export interface InvoiceRecipient {
+  mask: string;
+  addedAt: string;
+  via: "issue" | "share";
+  requests: number;
+  grants: number;
+}
+
+export interface InvoiceRecipients {
+  invoiceId: number;
+  reference: string | null;
+  verifyUrl: string;
+  recipients: InvoiceRecipient[];
+  maxRecipients: number;
+}
+
+export interface InvoiceShared extends InvoiceRecipients {
+  shared: { mask: string; mailed: boolean; reason?: string; added: boolean }[];
+  mailed: number;
+}
+
+export const getInvoiceRecipients = (invoiceId: number) => callAction<InvoiceRecipients>("invoice.recipients", { invoiceId });
+
+export const shareInvoice = (args: { invoiceId: number; emails: string[]; message?: string }) =>
+  callAction<InvoiceShared>("invoice.share", args as unknown as Record<string, unknown>);
+
+export const unshareInvoice = (args: { invoiceId: number; email: string }) =>
+  callAction<{ invoiceId: number; reference: string | null; removed: boolean; mask: string; recipients: InvoiceRecipient[] }>(
+    "invoice.unshare",
+    args as unknown as Record<string, unknown>
+  );
+
 /** "$45/h", or "1,200 SEK/h" where the code has no symbol. */
 const SYMBOLS: Record<string, string> = { USD: "$", EUR: "\u20ac", GBP: "\u00a3", JPY: "\u00a5" };
 
@@ -489,6 +530,7 @@ export const reportKeys = {
   contractorInvoices: ["track", "contractors", "invoices"] as const,
   contractors: (args: unknown) => ["track", "contractors", "overview", args] as const,
   contractorPreview: (args: unknown) => ["track", "contractors", "preview", args] as const,
+  invoiceRecipients: (invoiceId: number) => ["track", "contractors", "recipients", invoiceId] as const,
 };
 
 /* ── Reads ───────────────────────────────────────────────────────────── */

@@ -10,16 +10,23 @@
  *    entries it covers are frozen, and correcting one afterwards means voiding the
  *    invoice in the open rather than editing underneath it. The dialog says so.
  *  - A **member** sees their own invoices and nothing else — the reference, the
- *    amount, the PDF, and the public verification link they can hand to anyone who
- *    needs to check the hours were really produced by the system.
+ *    amount, the PDF, and the verification link they can hand to anyone who needs
+ *    to check the hours were really produced by the system.
  *
  * The verification link is a plain anchor on purpose: it is a URL a contractor is
- * meant to copy into an email, not an in-app route behind a token.
+ * meant to copy into an email, not an in-app route behind a token. What it shows a
+ * stranger is a reference, a date and three integrity checks — nothing about who
+ * is billing whom for how much. The particulars are released only to an address
+ * named in the **Share** dialog, and only after a code emailed to that address.
+ *
+ * The recipient list is masked, and that is not coyness: the addresses are stored
+ * as a per-invoice salted hash and cannot be read back. So there is no "resend to
+ * row three" — re-entering the address re-sends the letter, and the dialog says so.
  */
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BadgeCheck, ExternalLink, FileText, Loader2, ShieldCheck } from "lucide-react";
+import { BadgeCheck, ExternalLink, FileText, Loader2, Send, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -44,6 +51,7 @@ import {
   type ContractorsOverview,
 } from "./api";
 import { Empty, Failed, Loading, Panel } from "./bits";
+import ShareDialog from "./ShareInvoiceDialog";
 import { MONTH_NAMES, invoiceYears } from "./ranges";
 
 async function openPdf(pdfUrl: string) {
@@ -222,6 +230,7 @@ function InvoiceLine({ row, canVoid }: { row: ContractorInvoiceRow; canVoid: boo
   const qc = useQueryClient();
   const { toast } = useToast();
   const [reason, setReason] = useState("");
+  const [sharing, setSharing] = useState(false);
 
   const kill = useMutation({
     mutationFn: () => voidInvoice({ invoiceId: row.id, reason: reason.trim() }),
@@ -257,13 +266,24 @@ function InvoiceLine({ row, canVoid }: { row: ContractorInvoiceRow; canVoid: boo
           target="_blank"
           rel="noopener noreferrer"
           className="h-8 px-2 rounded-sm inline-flex items-center gap-1.5 text-ink-muted hover:text-vermilion focus-ink shrink-0"
-          title="Open the public verification page — this link can be handed to anyone holding the invoice"
+          title="Open the verification page. The link proves the invoice is genuine to anyone; its details need a code emailed to a named recipient."
           data-testid={`contractor-verify-${row.id}`}
         >
           <ShieldCheck className="h-3.5 w-3.5" />
           <span className="eyebrow text-[9px] !text-current">verify</span>
           <ExternalLink className="h-2.5 w-2.5" />
         </a>
+      ) : null}
+      {row.verifyUrl ? (
+        <Button
+          variant="ghost"
+          className="h-8 rounded-sm font-display text-sm shrink-0"
+          onClick={() => setSharing(true)}
+          title="Name the people who may read this invoice's details"
+          data-testid={`contractor-share-${row.id}`}
+        >
+          Share
+        </Button>
       ) : null}
       <Button
         variant="ghost"
@@ -311,6 +331,14 @@ function InvoiceLine({ row, canVoid }: { row: ContractorInvoiceRow; canVoid: boo
           </AlertDialogContent>
         </AlertDialog>
       ) : null}
+      {sharing ? (
+        <ShareDialog
+          invoiceId={row.id}
+          reference={row.reference ?? `invoice ${row.id}`}
+          verifyUrl={row.verifyUrl ?? ""}
+          onClose={() => setSharing(false)}
+        />
+      ) : null}
     </li>
   );
 }
@@ -320,16 +348,17 @@ function IssueDialog({ userId, name, month, year, onClose }: { userId: number; n
   const { toast } = useToast();
   const args = { userId, month, year };
   const preview = useQuery({ queryKey: reportKeys.contractorPreview(args), queryFn: () => previewContractorInvoice(args) });
-  const [issued, setIssued] = useState<{ reference: string; verifyUrl: string; pdfUrl: string; contentHash: string } | null>(null);
+  const [issued, setIssued] = useState<{ invoiceId: number; reference: string; verifyUrl: string; pdfUrl: string; contentHash: string } | null>(null);
+  const [share, setShare] = useState(false);
 
   const commit = useMutation({
     mutationFn: () => generateContractorInvoice(args),
     onSuccess: (r) => {
-      setIssued({ reference: r.reference, verifyUrl: r.verifyUrl, pdfUrl: r.pdfUrl, contentHash: r.contentHash });
+      setIssued({ invoiceId: r.invoiceId, reference: r.reference, verifyUrl: r.verifyUrl, pdfUrl: r.pdfUrl, contentHash: r.contentHash });
       qc.invalidateQueries({ queryKey: ["track"] });
       toast({
         title: `${r.reference} issued and signed`,
-        description: `${r.entryCount} ${r.entryCount === 1 ? "entry" : "entries"} frozen; ${formatMoney(r.totals.amountCents, r.currency)} due.`,
+        description: `${r.entryCount} ${r.entryCount === 1 ? "entry" : "entries"} frozen; ${formatMoney(r.totals.amountCents, r.currency)} due. The link is safe to forward — share it with whoever may read the details.`,
       });
     },
     onError: (e: Error) => toast({ title: "The invoice could not be issued", description: e.message, variant: "destructive" }),
@@ -347,7 +376,8 @@ function IssueDialog({ userId, name, month, year, onClose }: { userId: number; n
           </DialogTitle>
           <DialogDescription className="font-serif">
             {name}'s recorded hours for {d?.period.label ?? `${MONTH_NAMES[month - 1]} ${year}`}. Issuing freezes every line below into
-            a signed record and locks it against later edits, and hands back a link anyone holding the invoice can use to check it.
+            a signed record and locks it against later edits, and hands back a link that proves the invoice is genuine to anyone who
+            opens it. The details behind the link go only to the people you name — {name} is named automatically.
           </DialogDescription>
         </DialogHeader>
 
@@ -440,6 +470,14 @@ function IssueDialog({ userId, name, month, year, onClose }: { userId: number; n
               </a>
               <Button
                 variant="outline"
+                onClick={() => setShare(true)}
+                className="h-10 rounded-sm border-ink/30 font-display uppercase tracking-tight text-sm"
+                data-testid="issued-share"
+              >
+                <Send className="h-3.5 w-3.5 mr-2" /> Share it
+              </Button>
+              <Button
+                variant="outline"
                 onClick={() => openPdf(issued.pdfUrl).catch((e: Error) => toast({ title: "The PDF could not be opened", description: e.message, variant: "destructive" }))}
                 className="h-10 rounded-sm border-ink/30 font-display uppercase tracking-tight text-sm"
               >
@@ -466,6 +504,10 @@ function IssueDialog({ userId, name, month, year, onClose }: { userId: number; n
             </>
           )}
         </div>
+
+        {share && issued ? (
+          <ShareDialog invoiceId={issued.invoiceId} reference={issued.reference} verifyUrl={issued.verifyUrl} onClose={() => setShare(false)} />
+        ) : null}
       </DialogContent>
     </Dialog>
   );
