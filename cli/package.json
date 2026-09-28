@@ -1,5 +1,5 @@
 {
-  "name": "ptd",
+  "name": "@danimoya/ptd",
   "version": "0.1.0",
   "description": "Command-line client for PTD — Plan Track Done. Every command is a registry action over HTTPS.",
   "license": "MIT",

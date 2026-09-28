@@ -72,7 +72,7 @@ gate applies over MCP, REST, Slack and every other adapter.
 ## CLI
 
 ```bash
-npx ptd login --url https://ptd.danimoya.com       # or: npm i -g ptd
+npx @danimoya/ptd login --url https://ptd.danimoya.com   # or: npm i -g @danimoya/ptd
 ptd next                                           # highest-priority task, with the arithmetic
 ptd start SEC-3 && ptd stop --tokens 1200 --cost 0.04
 ptd run task.totals --taskId=3                     # any action, by name

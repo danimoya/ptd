@@ -1,6 +1,6 @@
 name: Release CLI
 
-# Publishes cli/ to npm as `ptd` (npm refused `ptd-cli`: too similar to `dts-cli`).
+# Publishes cli/ to npm as `@danimoya/ptd` (npm refuses unscoped `ptd-cli` and `ptd`: "too similar" to dts-cli, pg, pkg…).
 #   git tag cli-v0.1.0 && git push origin cli-v0.1.0
 # The tag version must equal cli/package.json "version".
 # Auth: the NPM_TOKEN repository secret; when it is absent the job falls back to

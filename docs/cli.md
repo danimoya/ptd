@@ -7,8 +7,8 @@ allows in the web app — no more, no less.
 ## Install
 
 ```bash
-npx ptd --help              # no install
-npm i -g ptd                # then just `ptd`
+npx @danimoya/ptd --help    # no install
+npm i -g @danimoya/ptd      # then just `ptd`
 ```
 
 From a checkout of this repository:
