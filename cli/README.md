@@ -1,4 +1,4 @@
-# ptd-cli
+# ptd
 
 Command-line client for [PTD — Plan Track Done](https://ptd.danimoya.com), an
 open-core work tracker for teams that mix humans and AI agents.
@@ -7,7 +7,7 @@ Zero runtime dependencies, Node ≥ 20. Every command is one registry action ove
 HTTPS, so the CLI can do exactly what your role allows in the web app.
 
 ```bash
-npx ptd-cli login --url https://ptd.example    # or: npm i -g ptd-cli
+npx ptd login --url https://ptd.example        # or: npm i -g ptd
 ptd next                                       # highest-priority task, with the arithmetic
 ptd start SEC-3 wrote the middleware
 ptd stop --tokens 1200 --cost 0.04 shipped it

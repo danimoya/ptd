@@ -1,6 +1,6 @@
 name: Release CLI
 
-# Publishes cli/ to npm as `ptd-cli`.
+# Publishes cli/ to npm as `ptd` (npm refused `ptd-cli`: too similar to `dts-cli`).
 #   git tag cli-v0.1.0 && git push origin cli-v0.1.0
 # The tag version must equal cli/package.json "version".
 # Auth: the NPM_TOKEN repository secret; when it is absent the job falls back to
@@ -24,7 +24,7 @@ permissions:
 
 jobs:
   npm:
-    name: Publish ptd-cli
+    name: Publish ptd
     runs-on: ubuntu-latest
     defaults:
       run:
