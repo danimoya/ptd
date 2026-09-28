@@ -3,6 +3,10 @@
 > Plan the work in one view, log the work in the other — same task, same source
 > of truth, whether a human or an agent did it.
 
+<p align="center">
+  <img src="docs/screenshots/tour.webp" alt="PTD product tour: Plan board, Track timer and ledger, Overview backlog and agent spend, Org members and agent seats" width="900" />
+</p>
+
 PTD is an open-core work tracker for hybrid human + AI-agent teams. One
 organization, one shared **Task**, four surfaces:
 
