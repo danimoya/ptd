@@ -1,6 +1,6 @@
 {
   "name": "@danimoya/ptd",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Command-line client for PTD — Plan Track Done. Every command is a registry action over HTTPS.",
   "license": "MIT",
   "repository": "github:danimoya/ptd",
