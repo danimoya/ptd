@@ -1,0 +1,78 @@
+name: Release CLI
+
+# Publishes cli/ to npm as `ptd-cli`.
+#   git tag cli-v0.1.0 && git push origin cli-v0.1.0
+# The tag version must equal cli/package.json "version".
+# Auth: the NPM_TOKEN repository secret; when it is absent the job falls back to
+# npm Trusted Publishing (OIDC), which needs this workflow registered on npmjs.com
+# under the package's Settings → Trusted Publisher.
+
+on:
+  push:
+    tags:
+      - 'cli-v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (build, test and pack only — no publish)'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  npm:
+    name: Publish ptd-cli
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+          cache-dependency-path: cli/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run check
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Tag matches package version
+        if: ${{ startsWith(github.ref, 'refs/tags/cli-v') }}
+        run: |
+          tag="${GITHUB_REF_NAME#cli-v}"
+          pkg="$(node -p 'require("./package.json").version')"
+          [ "$tag" = "$pkg" ] || { echo "tag $tag != package.json $pkg"; exit 1; }
+
+      - name: Pack (dry run)
+        run: npm pack --dry-run
+
+      - name: Upgrade npm CLI
+        run: npm install -g npm@latest
+
+      - name: Publish
+        if: ${{ github.event.inputs.dry_run != 'true' && startsWith(github.ref, 'refs/tags/cli-v') }}
+        run: |
+          if [ -n "${NODE_AUTH_TOKEN}" ]; then
+            echo "Publishing with NPM_TOKEN"
+            npm publish --access public
+          else
+            echo "Publishing with Trusted Publishing (OIDC)"
+            npm publish --access public --provenance
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
