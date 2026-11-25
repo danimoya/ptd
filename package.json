@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Plan Track Done \u2014 plan the work in one view, log the work in the other; same task, same source of truth, whether a human or an agent did it.",
   "type": "module",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": "github:danimoya/ptd",
   "scripts": {
     "dev": "tsx server/index.ts",

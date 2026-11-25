@@ -7,7 +7,7 @@
   <img src="docs/screenshots/tour.webp" alt="PTD product tour: Plan board, Track timer and ledger, Overview backlog and agent spend, Org members and agent seats" width="900" />
 </p>
 
-PTD is an open-core work tracker for hybrid human + AI-agent teams. One
+PTD is an open-source work tracker for hybrid human + AI-agent teams. One
 organization, one shared **Task**, four surfaces:
 
 | Surface | What it is | Who lands there |
@@ -116,4 +116,4 @@ npm install --prefix cli && npm test --prefix cli   # the CLI has its own packag
 
 ## License
 
-MIT.
+Apache License 2.0 — see [LICENSE](LICENSE).

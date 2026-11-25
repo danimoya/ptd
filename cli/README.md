@@ -1,7 +1,7 @@
 # @danimoya/ptd
 
 Command-line client for [PTD — Plan Track Done](https://ptd.danimoya.com), an
-open-core work tracker for teams that mix humans and AI agents.
+open-source work tracker for teams that mix humans and AI agents.
 
 Zero runtime dependencies, Node ≥ 20. Every command is one registry action over
 HTTPS, so the CLI can do exactly what your role allows in the web app.
@@ -29,4 +29,4 @@ Exit codes: **0** ok, **1** error, **2** usage, **3** forbidden.
 
 Full documentation: <https://github.com/danimoya/ptd/blob/main/docs/cli.md>
 
-MIT.
+Apache License 2.0 — see [LICENSE](LICENSE).

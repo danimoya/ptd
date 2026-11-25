@@ -3,7 +3,7 @@
  *
  * Three rules shape this file:
  *
- *  1. **Off by default.** PTD is open-core and most self-hosters have no key,
+ *  1. **Off by default.** PTD is open source and most self-hosters have no key,
  *     so nothing here runs until PTD_AI_PROVIDER *and* PTD_AI_API_KEY are set.
  *     `aiStatus()` is the only function that is safe to call unconfigured.
  *  2. **No SDK.** `fetch` against two documented REST shapes, the same posture

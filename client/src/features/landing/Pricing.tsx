@@ -203,7 +203,7 @@ function PricingFace({ onContact }: { onContact: () => void }) {
         <h3 className="font-display text-[1.4rem] tracking-[-0.02em] text-ink">Self-host</h3>
         <p className="font-display mt-3 text-[2.4rem] leading-none tracking-[-0.03em] text-ink">Free</p>
         <p className="font-numeric mt-1.5 text-[10px] uppercase tracking-[0.14em] text-ink-muted">
-          MIT · unlimited seats
+          Apache 2.0 · unlimited seats
         </p>
         <p className="mt-4 text-[0.95rem] leading-relaxed text-ink-muted text-pretty">
           Everything except the hosted conveniences. Your hardware, your database, your backups, and no seat

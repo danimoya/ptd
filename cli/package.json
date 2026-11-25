@@ -2,7 +2,7 @@
   "name": "@danimoya/ptd",
   "version": "0.1.1",
   "description": "Command-line client for PTD — Plan Track Done. Every command is a registry action over HTTPS.",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": "github:danimoya/ptd",
   "homepage": "https://ptd.danimoya.com",
   "type": "module",

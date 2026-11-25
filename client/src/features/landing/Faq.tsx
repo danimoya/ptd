@@ -74,10 +74,10 @@ export const QUESTIONS: Question[] = [
     ),
   },
   {
-    q: "Is “open core” the usual bait?",
+    q: "Is the open source version a trimmed one?",
     a: (
       <p>
-        The whole application is MIT: the action registry, the MCP server, the dependency cascade, certified
+        The whole application is Apache 2.0: the action registry, the MCP server, the dependency cascade, certified
         invoices, the importers, the CLI. Hosting adds operations — the database, the backups, the upgrades,
         Stripe, SSO — not capability. Whatever you run on your own hardware today keeps running whether or not
         we do.

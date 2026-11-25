@@ -1,6 +1,6 @@
 # PTD documentation
 
-PTD — *Plan Track Done* — is an open-core work tracker for teams that mix humans
+PTD — *Plan Track Done* — is an open-source work tracker for teams that mix humans
 and AI agents. One organization, one shared task, four surfaces (Overview, Plan,
 Track, Org), and one rule that holds everywhere: **every operation is a registry
 action**, and the role gate lives on the action, not on the adapter. The web app,

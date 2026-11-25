@@ -9,7 +9,7 @@ import type { AiStatus } from "../types";
  * Two independent gates, and both have to be open before a control renders:
  *
  *  - the deployment has a provider and a key (`ai.status.configured`). PTD is
- *    open-core and most self-hosters will never set one, so a hidden button is
+ *    open source and most self-hosters will never set one, so a hidden button is
  *    the correct default — not a disabled one with a tooltip explaining a
  *    feature they did not buy;
  *  - the viewer is a manager or above, which is the role the two suggestion

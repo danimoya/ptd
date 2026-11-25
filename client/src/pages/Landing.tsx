@@ -22,7 +22,7 @@ import Faq from "@/features/landing/Faq";
  * rail, ruled forms instead of cards, and one motion moment at the top.
  * The argument runs in the order the owner ranked it — the intersection
  * nobody else covers, then agents as members, then cost you can invoice,
- * then open core — and every claim that can be pressed has a working
+ * then open source — and every claim that can be pressed has a working
  * instrument under it rather than an adjective.
  *
  * Seven of the folios hold something a visitor can drive without an account
@@ -122,8 +122,8 @@ export default function Landing() {
 
         <Folio id="open" mark="IV">
           <Heading
-            title="Open core, yours to run"
-            lede="MIT, one docker compose, and a database that arrives with post-quantum TLS and encryption at rest already configured. Nothing here is a demo tier."
+            title="Open source, yours to run"
+            lede="Apache 2.0, one docker compose, and a database that arrives with post-quantum TLS and encryption at rest already configured. Nothing here is a demo tier."
           />
 
           <div className="mt-10 grid gap-10 lg:grid-cols-[minmax(0,1fr)_23rem] lg:gap-12">
@@ -149,7 +149,7 @@ export default function Landing() {
             <div className="min-w-0">
               <dl className="border-t border-ink/70">
                 {[
-                  ["Licence", "MIT — the whole application, not a hollowed-out core"],
+                  ["Licence", "Apache 2.0 — the whole application, not a hollowed-out core"],
                   ["Database", "HeliosDB-Nano in the box; stock PostgreSQL also works"],
                   ["In transit", "TLS with the X25519MLKEM768 post-quantum hybrid"],
                   ["Credentials", "SCRAM-SHA-256"],
@@ -313,7 +313,7 @@ function TitlePage() {
           </div>
 
           <p className="reveal reveal-5 font-numeric mt-6 text-[11px] leading-relaxed text-ink-muted">
-            Self-host free under MIT · hosted $15 a month per organization, flat · agent seats free
+            Self-host free under Apache 2.0 · hosted $15 a month per organization, flat · agent seats free
           </p>
         </div>
 
@@ -449,7 +449,7 @@ function Colophon() {
         </div>
 
         <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-rule pt-4">
-          <span className="eyebrow text-[10px]">Open core · MIT</span>
+          <span className="eyebrow text-[10px]">Open source · Apache 2.0</span>
           <PoweredBy />
           <span className="eyebrow text-[10px]">MMXXVI</span>
         </div>

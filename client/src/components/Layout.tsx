@@ -73,7 +73,7 @@ export default function Layout() {
         <footer className="hidden sm:block rule-t">
           <div className="py-4 flex items-center justify-between gap-6 text-xs text-ink-muted">
             <span className="flex items-baseline gap-3">
-              <span className="eyebrow text-[10px]">Open core · MIT</span>
+              <span className="eyebrow text-[10px]">Open source · Apache 2.0</span>
               <span className="text-ink-muted/40">·</span>
               <PoweredBy />
             </span>

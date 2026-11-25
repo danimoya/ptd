@@ -497,7 +497,7 @@ export default function Auth() {
           <Link to="/welcome" className="focus-ink font-numeric text-[11px] text-ink-muted hover:text-ink">
             What PTD does
           </Link>
-          <span className="eyebrow text-[10px]">Open core · MIT</span>
+          <span className="eyebrow text-[10px]">Open source · Apache 2.0</span>
         </footer>
       </div>
     </div>
